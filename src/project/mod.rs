@@ -1,0 +1,202 @@
+pub mod config;
+pub mod error;
+pub mod model;
+
+pub use config::{Config, ProjectConfig};
+use directories::UserDirs;
+pub use error::ProjectError;
+pub use model::{Project, ProjectRequest};
+use std::{
+    collections::HashMap,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+#[derive(Debug)]
+pub struct ProjectHandler {
+    project_folder: PathBuf,
+    config_path: PathBuf,
+    projects: Vec<Project>,
+}
+
+impl Default for ProjectHandler {
+    fn default() -> Self {
+        Self::new(get_projects_path(None), "settings.json")
+    }
+}
+
+impl ProjectHandler {
+    pub fn new(folder: PathBuf, config_name: &str) -> Self {
+        let config_path = folder.join(config_name);
+        Self::from_config_path(&config_path)
+    }
+
+    pub fn from_config_path(path: &Path) -> Self {
+        let config_path = std::fs::canonicalize(path).expect("Path couldn't be resolved");
+        let project_folder = path.parent().expect("There should be a parent");
+        Self {
+            project_folder: project_folder.to_owned(),
+            config_path,
+            projects: Vec::new(),
+        }
+    }
+
+    pub fn read_config(&mut self) -> std::io::Result<()> {
+        let content = std::fs::read_to_string(&self.config_path)?;
+        let config: Config = serde_json::from_str(&content)?;
+
+        self.projects = config
+            .into_iter()
+            .map(|(file_name, project)| {
+                let valid = self.project_folder.join(&file_name).exists();
+                Project::new(project.name, file_name, project.parent, project.icon, valid)
+            })
+            .collect();
+        self.sort_projects();
+        Ok(())
+    }
+
+    pub fn write_config(&self) -> std::io::Result<()> {
+        let mut config = HashMap::new();
+        for project in &self.projects {
+            let key = project.script_name.clone();
+            config.insert(
+                key,
+                ProjectConfig {
+                    name: project.name.clone(),
+                    parent: project.parent.clone(),
+                    icon: project.icon.clone(),
+                },
+            );
+        }
+        let serialized = serde_json::to_string_pretty(&config)?;
+        std::fs::write(&self.config_path, serialized)
+    }
+
+    pub fn projects(&self) -> &[Project] {
+        &self.projects
+    }
+
+    pub fn get_project(&self, index: usize) -> &Project {
+        &self.projects[index]
+    }
+
+    pub fn add_project(&mut self, request: ProjectRequest) -> Result<(), ProjectError> {
+        if request.name.is_empty() {
+            return Err(ProjectError::InvalidField("name"));
+        }
+        if request.script.is_empty() {
+            return Err(ProjectError::InvalidField("script"));
+        }
+
+        if self.projects.iter().any(|p| p.name == request.name) {
+            return Err(ProjectError::AlreadyExists("name"));
+        }
+
+        if self
+            .projects
+            .iter()
+            .any(|p| p.script_name == request.script)
+        {
+            return Err(ProjectError::AlreadyExists("script"));
+        }
+        let script = self.project_folder.join(request.script);
+        if !(script.exists() && script.is_file()) {
+            create_template(request.script, &script)?
+        }
+
+        self.projects.push(request.into());
+        self.sort_projects();
+        Ok(())
+    }
+
+    pub fn edit_project(
+        &mut self,
+        index: usize,
+        request: ProjectRequest,
+    ) -> Result<(), ProjectError> {
+        self.remove_project(index)?;
+        self.add_project(request)
+    }
+
+    pub fn remove_project(&mut self, index: usize) -> Result<(), ProjectError> {
+        self.check_index(index)?;
+        self.projects.remove(index);
+        Ok(())
+    }
+
+    pub fn launch_project(&self, index: usize) -> Result<(), ProjectError> {
+        let path = self.get_script_path(index)?;
+        Command::new(path)
+            .output()
+            .map_err(ProjectError::ExecutionError)?;
+        Ok(())
+    }
+
+    pub fn edit_settings(&self) -> Result<(), ProjectError> {
+        edit::edit_file(&self.config_path).map_err(ProjectError::IOError)
+    }
+
+    pub fn edit_project_script(&self, index: usize) -> Result<(), ProjectError> {
+        let path = self.get_script_path(index)?;
+        Self::edit_file(path)
+    }
+
+    fn edit_file<P: AsRef<Path>>(path: P) -> Result<(), ProjectError> {
+        edit::edit_file(path).map_err(ProjectError::IOError)
+    }
+
+    pub fn script_path(&self, project: &Project) -> PathBuf {
+        self.project_folder.join(&project.script_name)
+    }
+
+    fn sort_projects(&mut self) {
+        self.projects.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    fn check_index(&self, index: usize) -> Result<(), ProjectError> {
+        if index >= self.projects.len() {
+            return Err(ProjectError::InvalidIndex(index));
+        }
+        Ok(())
+    }
+
+    fn get_script_path(&self, index: usize) -> Result<PathBuf, ProjectError> {
+        self.check_index(index)?;
+        let project = &self.projects[index];
+        Ok(self.project_folder.join(&project.script_name))
+    }
+}
+
+pub fn get_projects_path(project_folder: Option<&str>) -> PathBuf {
+    let project_folder = project_folder.unwrap_or(".projects");
+    UserDirs::new()
+        .expect("No valid user directories")
+        .home_dir()
+        .join(project_folder)
+}
+
+pub fn get_file_name(path: &Path) -> &str {
+    path.file_name().unwrap().to_str().unwrap()
+}
+
+pub fn create_template(name: &str, path: &PathBuf) -> std::io::Result<()> {
+    std::fs::write(
+        path,
+        format!(
+            r#"#!/bin/bash
+project_folder="/mnt/data/projects/{}"
+script_folder="$(dirname "$(readlink -f "$0")")"
+"#,
+            name
+        ),
+    )?;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mut permissions = meta.permissions();
+        permissions.set_mode(0o750);
+        std::fs::set_permissions(path, permissions)?;
+    }
+
+    Ok(())
+}
