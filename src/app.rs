@@ -1,6 +1,6 @@
 use crate::{
     event::{AppEvent, Event, EventHandler},
-    forms::{ErrorForm, GetForm, ProjectForm},
+    forms::{GetForm, ProjectForm},
     project::{ProjectError, ProjectHandler},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -39,7 +39,6 @@ pub struct AppState {
     pub mode: Mode,
     pub overview: ListState,
     pub project_form: ProjectForm,
-    pub error_form: ErrorForm,
 }
 
 impl App {
@@ -220,7 +219,6 @@ impl App {
 
                     Mode::Error(_) => {
                         if app_event == AppEvent::Submit {
-                            self.state.error_form.clear();
                             self.state.mode = Mode::Home;
                         }
                     }
@@ -322,7 +320,6 @@ impl Default for AppState {
             mode: Mode::default(),
             overview,
             project_form: ProjectForm::default(),
-            error_form: ErrorForm::default(),
         }
     }
 }
