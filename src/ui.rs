@@ -67,11 +67,6 @@ impl App {
             ),
 
             Mode::Error(msg) => render_popup("Error", msg, ERROR_STYLE, area, buf),
-            // Mode::Error => Form::styled("Error", ERROR_STYLE).render(
-            //     area,
-            //     buf,
-            //     self.state.error_form.state_mut(),
-            // ),
             _ => {}
         }
     }
@@ -83,7 +78,11 @@ impl App {
         state: &mut AppState,
     ) {
         let block = create_block(" Projects ");
-        let overview_list = List::new(project_handler.projects())
+        let items = project_handler
+            .projects()
+            .iter()
+            .map(|p| to_list_item(p, state.show_group));
+        let overview_list = List::new(items)
             .block(block)
             .highlight_style(SELECTED_STYLE)
             .highlight_symbol(">")
@@ -167,19 +166,26 @@ impl App {
     }
 }
 
-// TODO: change so that parent show can be toggled
-impl<'a> From<&'a Project> for ListItem<'a> {
-    fn from(value: &'a Project) -> Self {
-        let icon = value.icon.as_ref().map_or_else(|| "", |i| i.as_str());
-        let style = if value.valid { ITEM_STYLE } else { ERROR_STYLE };
+fn to_list_item<'a>(project: &'a Project, show_parent: bool) -> ListItem<'a> {
+    let icon = project.icon.as_ref().map_or_else(|| "", |i| i.as_str());
+    let style = if project.valid {
+        ITEM_STYLE
+    } else {
+        ERROR_STYLE
+    };
 
-        let content = Text::from(vec![Line::from(Span::styled(
-            format!(" {icon} {}", value.name),
-            style,
-        ))]);
+    let mut parts = vec![Span::styled(format!(" {icon} {}", project.name), style)];
 
-        ListItem::new(content)
+    if show_parent {
+        parts.push(Span::from("\t"));
+        parts.push(Span::styled(
+            project.parent.as_deref().unwrap_or_default(),
+            PARENT_STYLE,
+        ));
     }
+    let content = Text::from(Line::from(parts));
+
+    ListItem::new(content)
 }
 
 fn create_block(title: &str) -> Block<'_> {

@@ -47,7 +47,7 @@ pub enum AppEvent {
     EditSettings,
     EditScript,
     LaunchProject,
-    ToggleGroup, // TODO: Implement
+    ToggleGroup,
     Char(char),
     Backspace,
     Submit,
