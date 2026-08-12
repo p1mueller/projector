@@ -38,6 +38,7 @@ pub struct App {
 #[derive(Debug)]
 pub struct AppState {
     pub needs_redraw: bool,
+    pub needs_reload: bool,
     pub failed: bool,
     pub show_group: bool,
     pub mode: Mode,
@@ -63,12 +64,16 @@ impl App {
         self.events.enter()?;
         self.list_state.select_first();
         while self.running {
-            if self.state.needs_redraw {
+            if self.state.needs_reload {
                 match self.project_handler.read_config() {
                     Ok(_) => self.state.failed = false,
                     Err(error) => {
                         if self.state.failed {
-                            self.open_editor(ProjectHandler::edit_settings)?
+                            let res = self.open_editor(ProjectHandler::edit_settings);
+                            if let Err(error) = res {
+                                println!("{error}");
+                                return Err(error);
+                            }
                         } else {
                             let msg = format!(
                                 "Encountered error while reading configuration:\n{error}\nYou will be forwarded to your editor to fix the issue."
@@ -78,6 +83,11 @@ impl App {
                         }
                     }
                 }
+                self.state.needs_reload = false;
+                self.state.needs_redraw = true;
+            }
+
+            if self.state.needs_redraw {
                 let project_handler = &self.project_handler;
                 let state = &mut self.state;
 
@@ -86,6 +96,7 @@ impl App {
                 })?;
                 self.state.needs_redraw = false;
             }
+
             self.handle_events().await?;
         }
         Ok(())
@@ -171,10 +182,10 @@ impl App {
                         }
                         AppEvent::Reload => {
                             self.state.failed = false;
-                            self.state.needs_redraw = true;
+                            self.state.needs_reload = true;
                         }
                         AppEvent::Abort => self.go_home(),
-                        _ => todo!(),
+                        _ => self.state.needs_redraw = false,
                     },
 
                     Mode::Add | Mode::Edit | Mode::Filter => {
@@ -209,7 +220,7 @@ impl App {
                                 }
                                 _ => unreachable!(),
                             },
-                            _ => {}
+                            _ => self.state.needs_redraw = false,
                         }
                     }
 
@@ -227,12 +238,15 @@ impl App {
                             }
                         }
                         AppEvent::Abort => self.state.mode = Mode::Home,
-                        _ => {}
+                        _ => self.state.needs_redraw = false,
                     },
 
                     Mode::Error(_) => {
                         if app_event == AppEvent::Submit {
+                            self.state.needs_reload = true;
                             self.go_home();
+                        } else {
+                            self.state.needs_redraw = false;
                         }
                     }
                 }
@@ -361,7 +375,6 @@ impl App {
         match result {
             Ok(_) => {
                 self.project_handler.write_config()?;
-                // self.project_handler.read_config()?;
                 self.state.project_form.state_mut().clear_all();
                 self.go_home();
             }
@@ -391,6 +404,7 @@ impl Default for AppState {
         overview.select_first();
         Self {
             needs_redraw: true,
+            needs_reload: true,
             failed: false,
             show_group: false,
             mode: Mode::default(),
