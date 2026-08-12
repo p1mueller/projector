@@ -7,7 +7,7 @@ use directories::UserDirs;
 pub use error::ProjectError;
 pub use model::{Project, ProjectRequest};
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
@@ -58,7 +58,7 @@ impl ProjectHandler {
     }
 
     pub fn write_config(&self) -> std::io::Result<()> {
-        let mut config = HashMap::new();
+        let mut config = BTreeMap::new();
         for project in &self.projects {
             let key = project.script_name.clone();
             config.insert(
