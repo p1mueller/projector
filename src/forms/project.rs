@@ -1,7 +1,12 @@
+use std::ops::{Deref, DerefMut};
+
 use super::GetForm;
 use crate::{
     project::{Project, model::ProjectRequest},
-    widgets::form::{FormState, InputField},
+    widgets::{
+        form::{FormState, InputField},
+        text_input::TextInputState,
+    },
 };
 
 #[derive(Debug)]
@@ -67,7 +72,7 @@ impl ProjectForm {
         self.state.input_fields[3].set_text(text);
     }
 
-    pub fn set_project(&mut self, project: &Project) {
+    pub fn set_project(&mut self, project: Project) {
         self.set_name(&project.name);
         self.set_script(&project.script_name);
         self.set_parent(project.parent.as_deref());
@@ -81,5 +86,19 @@ impl ProjectForm {
             parent: self.parent(),
             icon: self.icon(),
         }
+    }
+}
+
+impl Deref for ProjectForm {
+    type Target = TextInputState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl DerefMut for ProjectForm {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
     }
 }

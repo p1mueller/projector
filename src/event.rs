@@ -44,6 +44,7 @@ pub enum AppEvent {
     AddProject,
     EditProject,
     RemoveProject,
+    FilterProject,
     EditSettings,
     EditScript,
     LaunchProject,

@@ -1,12 +1,15 @@
+use std::ops::DerefMut;
+
 use crate::{
     event::{AppEvent, Event, EventHandler},
     forms::{GetForm, ProjectForm},
-    project::{ProjectError, ProjectHandler},
+    project::{Project, ProjectError, ProjectHandler},
+    widgets::filter::FilterState,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 
-//  TODO: Add filter feature
+// TODO: Less file IO (reloading only when explicit or needed)
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Mode {
@@ -15,6 +18,7 @@ pub enum Mode {
     Add,
     Edit,
     Remove,
+    Filter,
     Error(String),
 }
 
@@ -39,6 +43,7 @@ pub struct AppState {
     pub mode: Mode,
     pub overview: ListState,
     pub project_form: ProjectForm,
+    pub filter: FilterState,
 }
 
 impl App {
@@ -126,21 +131,20 @@ impl App {
                             if self.state.failed {
                                 return Ok(());
                             }
-                            if let Some(index) = self.state.overview.selected() {
-                                let project = self.project_handler.get_project(index);
+                            if let Some(project) = self.selected_project().cloned() {
                                 self.state.mode = Mode::Edit;
-                                project_state.select_first();
                                 self.state.project_form.set_project(project);
+                                self.state.project_form.state_mut().select_first();
                             }
                         }
                         AppEvent::RemoveProject => {
-                            if self.state.overview.selected().is_some() {
+                            if self.selected_project().is_some() {
                                 self.state.mode = Mode::Remove;
                             }
                         }
                         AppEvent::LaunchProject => {
-                            if let Some(index) = overview.selected() {
-                                let result = self.project_handler.launch_project(index);
+                            if let Some(project) = self.selected_project() {
+                                let result = self.project_handler.launch_project(project);
                                 if let Err(err) = result {
                                     self.state.mode = Mode::Error(err.to_string())
                                 }
@@ -152,62 +156,71 @@ impl App {
                             }
                         }
                         AppEvent::EditScript => {
-                            if let Some(index) = overview.selected()
+                            let project = self.selected_project().cloned();
+
+                            if let Some(project) = project
                                 && let Err(err) =
-                                    self.open_editor(|ph| ph.edit_project_script(index))
+                                    self.open_editor(|ph| ph.edit_project_script(&project))
                             {
-                                self.state.mode = Mode::Error(err.to_string())
+                                self.state.mode = Mode::Error(err.to_string());
                             }
+                        }
+                        AppEvent::FilterProject => {
+                            self.state.mode = Mode::Filter;
+                            self.state.filter.active = true;
                         }
                         AppEvent::Reload => {
                             self.state.failed = false;
                             self.state.needs_redraw = true;
                         }
+                        AppEvent::Abort => self.go_home(),
                         _ => todo!(),
                     },
 
-                    Mode::Add | Mode::Edit => match app_event {
-                        AppEvent::SelectNext => project_state.select_next(),
-                        AppEvent::SelectPrevious => project_state.select_previous(),
-                        AppEvent::MoveLeft => project_state.move_cursor_left(),
-                        AppEvent::MoveRight => project_state.move_cursor_right(),
-                        AppEvent::Char(ch) => project_state.put(ch),
-                        AppEvent::Backspace => project_state.backspace(),
-                        AppEvent::Submit => {
-                            let request = self.state.project_form.get_project();
-                            let result = match self.state.mode {
-                                Mode::Add => self.project_handler.add_project(request),
-                                Mode::Edit => {
-                                    let index = overview.selected().unwrap();
-                                    self.project_handler.edit_project(index, request)
+                    Mode::Add | Mode::Edit | Mode::Filter => {
+                        let state = match self.state.mode {
+                            Mode::Add | Mode::Edit => project_state.deref_mut(),
+                            Mode::Filter => self.state.filter.deref_mut(),
+                            _ => unreachable!(),
+                        };
+                        match app_event {
+                            AppEvent::SelectNext => project_state.select_next(),
+                            AppEvent::SelectPrevious => project_state.select_previous(),
+                            AppEvent::MoveLeft => state.move_cursor_left(),
+                            AppEvent::MoveRight => state.move_cursor_right(),
+                            AppEvent::Char(ch) => state.put(ch),
+                            AppEvent::Backspace => state.backspace(),
+                            AppEvent::Submit => match self.state.mode {
+                                Mode::Add | Mode::Edit => {
+                                    self.handle_form_submit()?;
+                                }
+                                Mode::Filter => {
+                                    self.handle_filter_submit()?;
                                 }
                                 _ => unreachable!(),
-                            };
-                            match result {
-                                Ok(_) => {
-                                    self.project_handler.write_config()?;
-                                    // self.project_handler.read_config()?;
-                                    self.state.project_form.state_mut().clear();
+                            },
+                            AppEvent::Abort => match self.state.mode {
+                                Mode::Add | Mode::Edit => {
+                                    project_state.clear_all();
                                     self.state.mode = Mode::Home;
                                 }
-                                Err(error) => self.state.project_form.state_mut().set_error(error),
-                            }
+                                Mode::Filter => {
+                                    self.go_home();
+                                }
+                                _ => unreachable!(),
+                            },
+                            _ => {}
                         }
-                        AppEvent::Abort => {
-                            self.state.mode = Mode::Home;
-                            project_state.clear();
-                        }
-                        _ => {}
-                    },
+                    }
 
                     Mode::Remove => match app_event {
                         AppEvent::Submit => {
-                            let index = overview.selected().unwrap();
-                            let result = self.project_handler.remove_project(index);
+                            let project = self.selected_project().unwrap().clone();
+                            let result = self.project_handler.remove_project(&project);
                             match result {
                                 Ok(_) => {
                                     self.project_handler.write_config()?;
-                                    self.state.mode = Mode::Home;
+                                    self.go_home();
                                 }
 
                                 Err(err) => self.state.mode = Mode::Error(err.to_string()),
@@ -219,7 +232,7 @@ impl App {
 
                     Mode::Error(_) => {
                         if app_event == AppEvent::Submit {
-                            self.state.mode = Mode::Home;
+                            self.go_home();
                         }
                     }
                 }
@@ -232,7 +245,13 @@ impl App {
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         match self.state.mode {
             Mode::Home => match key_event.code {
-                KeyCode::Esc => self.events.send(AppEvent::Quit),
+                KeyCode::Esc => {
+                    if self.state.filter.active {
+                        self.events.send(AppEvent::Abort)
+                    } else {
+                        self.events.send(AppEvent::Quit)
+                    }
+                }
                 KeyCode::Char(' ') | KeyCode::Enter => self.events.send(AppEvent::LaunchProject),
                 KeyCode::Char('g') => self.events.send(AppEvent::SelectFirst),
                 KeyCode::Char('G') => self.events.send(AppEvent::SelectLast),
@@ -248,14 +267,21 @@ impl App {
                     self.events.send(AppEvent::Quit)
                 }
                 KeyCode::Char('s') => self.events.send(AppEvent::EditSettings),
+                KeyCode::Char('f' | 'F' | '/') => self.events.send(AppEvent::FilterProject),
                 KeyCode::Char('r' | 'R') => self.events.send(AppEvent::Reload),
                 KeyCode::Char('q') => self.events.send(AppEvent::Quit),
                 _ => {}
             },
 
-            Mode::Add | Mode::Edit => match key_event.code {
+            Mode::Add | Mode::Edit | Mode::Filter => match key_event.code {
                 KeyCode::Esc => self.events.send(AppEvent::Abort),
-                KeyCode::Down | KeyCode::Tab => self.events.send(AppEvent::SelectNext),
+                KeyCode::Down | KeyCode::Tab => {
+                    if self.state.mode == Mode::Filter {
+                        self.events.send(AppEvent::Submit)
+                    } else {
+                        self.events.send(AppEvent::SelectNext)
+                    }
+                }
                 KeyCode::Up | KeyCode::BackTab => self.events.send(AppEvent::SelectPrevious),
                 KeyCode::Left => self.events.send(AppEvent::MoveLeft),
                 KeyCode::Right => self.events.send(AppEvent::MoveRight),
@@ -264,12 +290,14 @@ impl App {
                 KeyCode::Enter => self.events.send(AppEvent::Submit),
                 _ => {}
             },
+
             Mode::Remove => match key_event.code {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.events.send(AppEvent::Submit),
                 KeyCode::Esc | KeyCode::Char('n' | 'N') => self.events.send(AppEvent::Abort),
                 KeyCode::Char('q') => self.events.send(AppEvent::Quit),
                 _ => {}
             },
+
             Mode::Error(_) => match key_event.code {
                 KeyCode::Char('q') => self.events.send(AppEvent::Quit),
                 _ => self.events.send(AppEvent::Submit),
@@ -287,6 +315,18 @@ impl App {
     /// Set running to false to quit the application.
     pub fn quit(&mut self) {
         self.running = false;
+    }
+
+    fn selected_project(&self) -> Option<&Project> {
+        let index = self.state.overview.selected()?;
+
+        if self.state.filter.active {
+            self.project_handler
+                .filter_projects(self.state.filter.text())
+                .nth(index)
+        } else {
+            self.project_handler.projects().get(index)
+        }
     }
 
     fn open_editor<F>(&mut self, edit: F) -> color_eyre::Result<()>
@@ -307,6 +347,42 @@ impl App {
 
         Ok(())
     }
+
+    fn handle_form_submit(&mut self) -> color_eyre::Result<()> {
+        let request = self.state.project_form.get_project();
+        let result = match self.state.mode {
+            Mode::Add => self.project_handler.add_project(request),
+            Mode::Edit => {
+                let index = self.state.overview.selected().unwrap();
+                self.project_handler.edit_project_by_index(index, request)
+            }
+            _ => unreachable!(),
+        };
+        match result {
+            Ok(_) => {
+                self.project_handler.write_config()?;
+                // self.project_handler.read_config()?;
+                self.state.project_form.state_mut().clear_all();
+                self.go_home();
+            }
+            Err(error) => self.state.project_form.state_mut().set_error(error),
+        }
+        Ok(())
+    }
+
+    fn handle_filter_submit(&mut self) -> color_eyre::Result<()> {
+        self.state.mode = Mode::Home;
+        if self.state.filter.text().is_empty() {
+            self.state.filter.active = false;
+        }
+        self.state.overview.select_first();
+        Ok(())
+    }
+
+    fn go_home(&mut self) {
+        self.state.mode = Mode::Home;
+        self.state.filter.clear_all();
+    }
 }
 
 impl Default for AppState {
@@ -320,6 +396,7 @@ impl Default for AppState {
             mode: Mode::default(),
             overview,
             project_form: ProjectForm::default(),
+            filter: FilterState::default(),
         }
     }
 }

@@ -9,7 +9,11 @@ use ratatui::{
     text::Text,
     widgets::{Block, BorderType, Clear, ListState, Paragraph, StatefulWidget, Widget},
 };
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    ops::{Deref, DerefMut},
+};
 
 const NO_FOCUS_CURSOR: Style = Style::new().bg(Color::Reset).fg(Color::Reset);
 const ERROR_STYLE: Style = Style::new().fg(Color::Red);
@@ -130,7 +134,7 @@ impl FormState {
         3 * self.input_fields.len()
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear_all(&mut self) {
         for field in &mut self.input_fields {
             field.state.clear();
         }
@@ -142,41 +146,9 @@ impl FormState {
         self.error = Some(error.to_string());
     }
 
-    pub fn put(&mut self, ch: char) {
-        if let Some(field) = self.get_selected_field_mut() {
-            field.state.put(ch);
-        }
-    }
-
-    pub fn backspace(&mut self) {
-        if let Some(field) = self.get_selected_field_mut() {
-            field.state.backspace();
-        }
-    }
-
     pub fn set_text_selected(&mut self, text: &str) {
         if let Some(field) = self.get_selected_field_mut() {
             field.state.set_text(text);
-        }
-    }
-
-    pub fn set_text(&mut self, index: usize, text: &str) -> bool {
-        if index >= self.input_fields.len() {
-            return false;
-        }
-        self.input_fields[index].set_text(text);
-        true
-    }
-
-    pub fn move_cursor_left(&mut self) {
-        if let Some(field) = self.get_selected_field_mut() {
-            field.state.move_cursor_left();
-        }
-    }
-
-    pub fn move_cursor_right(&mut self) {
-        if let Some(field) = self.get_selected_field_mut() {
-            field.state.move_cursor_right();
         }
     }
 
@@ -223,9 +195,37 @@ impl FormState {
         }
     }
 
+    fn get_index(&self) -> Option<usize> {
+        let index = self.list_state.selected()?;
+        let len = self.input_fields.len();
+        if index >= len {
+            Some(len.saturating_sub(1))
+        } else {
+            Some(index)
+        }
+    }
+
     fn get_selected_field_mut(&mut self) -> Option<&mut InputField> {
         let index = self.get_selected_index()?;
         self.input_fields.get_mut(index)
+    }
+}
+
+impl Deref for FormState {
+    type Target = TextInputState;
+
+    fn deref(&self) -> &Self::Target {
+        assert!(!self.input_fields.is_empty());
+        let index = self.get_index().unwrap_or_default();
+        &self.input_fields[index].state
+    }
+}
+
+impl DerefMut for FormState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        assert!(!self.input_fields.is_empty());
+        let index = self.get_index().unwrap_or_default();
+        &mut self.input_fields[index].state
     }
 }
 

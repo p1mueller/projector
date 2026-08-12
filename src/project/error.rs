@@ -5,6 +5,7 @@ use thiserror::Error;
 pub enum ProjectError {
     AlreadyExists(&'static str),
     InvalidField(&'static str),
+    InvalidProject,
     ScriptDoesNotExist,
     InvalidIndex(usize),
     IOError(Error),
@@ -18,6 +19,7 @@ impl Display for ProjectError {
             Self::ScriptDoesNotExist => write!(f, "Script path does not exist"),
             Self::AlreadyExists(field) => write!(f, "Entry with same `{field}` value exists"),
             Self::InvalidIndex(index) => write!(f, "Cannot find a project with index {index}"),
+            Self::InvalidProject => write!(f, "Project was created outside of Project Handler"),
             Self::IOError(error) => error.fmt(f),
             Self::ExecutionError(error) => {
                 write!(f, "There was an error during execution:\n{error}")

@@ -102,6 +102,13 @@ impl TextInputState {
 }
 
 impl TextInput {
+    pub fn new(line_style: Style, cursor_style: Style) -> Self {
+        Self {
+            line_style,
+            cursor_style,
+        }
+    }
+
     pub fn line_style(mut self, style: Style) -> Self {
         self.line_style = style;
         self

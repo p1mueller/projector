@@ -4,7 +4,7 @@ use crate::{
     app::{App, AppState, Mode},
     forms::GetForm,
     project::{Project, ProjectHandler},
-    widgets::{form::Form, popup::get_popup_area_centered},
+    widgets::{filter::FilterInput, form::Form, popup::get_popup_area_centered},
 };
 use ratatui::{
     buffer::Buffer,
@@ -37,8 +37,22 @@ impl App {
         buf: &mut Buffer,
         state: &mut AppState,
     ) {
-        let outer_layout = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
-        let [main_area, footer_area] = area.layout(&outer_layout);
+        let filter_area: Rect;
+        let main_area: Rect;
+        let footer_area: Rect;
+        if state.filter.active {
+            [filter_area, main_area, footer_area] = area.layout(&Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Fill(1),
+                Constraint::Length(1),
+            ]));
+            FilterInput::default().render(filter_area, buf, &mut state.filter);
+        } else {
+            [main_area, footer_area] = area.layout(&Layout::vertical([
+                Constraint::Fill(1),
+                Constraint::Length(1),
+            ]));
+        }
 
         let main_layout = Layout::horizontal([Constraint::Max(50), Constraint::Fill(2)]);
         let [left_area, preview_area] = main_area.layout(&main_layout);
@@ -46,9 +60,17 @@ impl App {
         let left_layout = Layout::vertical([Constraint::Fill(1), Constraint::Max(5)]);
         let [overview_area, detail_area] = left_area.layout(&left_layout);
 
-        Self::render_overview(project_handler, overview_area, buf, state);
-        Self::render_detail_view(project_handler, detail_area, buf, state);
-        Self::render_preview(project_handler, preview_area, buf, state);
+        let projects: Vec<&Project> = if state.filter.active {
+            project_handler
+                .filter_projects(state.filter.text())
+                .collect()
+        } else {
+            project_handler.projects().iter().collect()
+        };
+
+        Self::render_overview(&projects, overview_area, buf, state);
+        Self::render_detail_view(project_handler, &projects, detail_area, buf, state);
+        Self::render_preview(project_handler, &projects, preview_area, buf, state);
         Self::render_footer(footer_area, buf);
 
         match &state.mode {
@@ -71,54 +93,47 @@ impl App {
         }
     }
 
-    fn render_overview(
-        project_handler: &ProjectHandler,
-        area: Rect,
-        buf: &mut Buffer,
-        state: &mut AppState,
-    ) {
+    fn render_overview(projects: &[&Project], area: Rect, buf: &mut Buffer, state: &mut AppState) {
         let block = create_block(" Projects ");
-        let items = project_handler
-            .projects()
-            .iter()
-            .map(|p| to_list_item(p, state.show_group));
-        let overview_list = List::new(items)
+        let list = List::new(projects.iter().map(|p| to_list_item(p, state.show_group)));
+        let list = list
             .block(block)
             .highlight_style(SELECTED_STYLE)
             .highlight_symbol(">")
             .highlight_spacing(HighlightSpacing::Always);
-        StatefulWidget::render(&overview_list, area, buf, &mut state.overview);
+
+        StatefulWidget::render(&list, area, buf, &mut state.overview);
     }
 
     fn render_detail_view(
         project_handler: &ProjectHandler,
+        projects: &[&Project],
         area: Rect,
         buf: &mut Buffer,
         state: &AppState,
     ) {
         let block = create_block(" Details ");
         let path: PathBuf;
-        let lines =
-            if let Some(project) = Self::get_selected_project(project_handler, &state.overview) {
-                let parent = project.parent.as_ref().map_or_else(|| "", |x| x.as_str());
-                path = project_handler.script_path(project);
-                vec![
-                    Line::from_iter([
-                        Span::styled("Name:   ", ITEM_STYLE),
-                        Span::styled(&project.name, VALUE_STYLE),
-                    ]),
-                    Line::from_iter([
-                        Span::styled("Parent: ", ITEM_STYLE),
-                        Span::styled(parent, VALUE_STYLE),
-                    ]),
-                    Line::from_iter([
-                        Span::styled("Script: ", ITEM_STYLE),
-                        Span::styled(path.to_str().unwrap(), VALUE_STYLE),
-                    ]),
-                ]
-            } else {
-                Vec::new()
-            };
+        let lines = if let Some(project) = Self::get_selected_project(projects, &state.overview) {
+            let parent = project.parent.as_ref().map_or_else(|| "", |x| x.as_str());
+            path = project_handler.script_path(project);
+            vec![
+                Line::from_iter([
+                    Span::styled("Name:   ", ITEM_STYLE),
+                    Span::styled(&project.name, VALUE_STYLE),
+                ]),
+                Line::from_iter([
+                    Span::styled("Parent: ", ITEM_STYLE),
+                    Span::styled(parent, VALUE_STYLE),
+                ]),
+                Line::from_iter([
+                    Span::styled("Script: ", ITEM_STYLE),
+                    Span::styled(path.to_str().unwrap(), VALUE_STYLE),
+                ]),
+            ]
+        } else {
+            Vec::new()
+        };
         let text = Text::from(lines);
         let details = Paragraph::new(text).block(block);
         details.render(area, buf);
@@ -126,12 +141,13 @@ impl App {
 
     fn render_preview(
         project_handler: &ProjectHandler,
+        projects: &[&Project],
         area: Rect,
         buf: &mut Buffer,
         state: &AppState,
     ) {
         let block = create_block(" Preview ");
-        let content = match Self::get_selected_project(project_handler, &state.overview) {
+        let content = match Self::get_selected_project(projects, &state.overview) {
             Some(project) => {
                 let path = project_handler.script_path(project);
                 std::fs::read_to_string(&path).map_err(|_| path)
@@ -158,11 +174,12 @@ impl App {
     }
 
     pub(super) fn get_selected_project<'a>(
-        project_handler: &'a ProjectHandler,
+        projects: &'a [&Project],
         list_state: &'a ListState,
     ) -> Option<&'a Project> {
         let index = list_state.selected()?;
-        Some(project_handler.get_project(index))
+        let index = index.min(projects.len() - 1);
+        Some(projects[index])
     }
 }
 

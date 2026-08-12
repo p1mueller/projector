@@ -1,3 +1,4 @@
+pub mod filter;
 pub mod form;
 pub mod popup;
 pub mod scroll_state;

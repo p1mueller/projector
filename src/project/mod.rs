@@ -78,8 +78,22 @@ impl ProjectHandler {
         &self.projects
     }
 
+    pub fn filter_projects(&self, text: &str) -> impl Iterator<Item = &Project> {
+        let text = text.to_lowercase();
+        self.projects.iter().filter(move |p| {
+            p.name.to_lowercase().contains(&text)
+                || p.parent
+                    .as_deref()
+                    .is_some_and(|parent| parent.to_lowercase().contains(&text))
+        })
+    }
+
     pub fn get_project(&self, index: usize) -> &Project {
         &self.projects[index]
+    }
+
+    pub fn get_project_mut(&mut self, index: usize) -> &mut Project {
+        &mut self.projects[index]
     }
 
     pub fn add_project(&mut self, request: ProjectRequest) -> Result<(), ProjectError> {
@@ -113,21 +127,37 @@ impl ProjectHandler {
 
     pub fn edit_project(
         &mut self,
-        index: usize,
+        project: &Project,
         request: ProjectRequest,
     ) -> Result<(), ProjectError> {
-        self.remove_project(index)?;
+        self.remove_project(project)?;
         self.add_project(request)
     }
 
-    pub fn remove_project(&mut self, index: usize) -> Result<(), ProjectError> {
+    pub fn edit_project_by_index(
+        &mut self,
+        index: usize,
+        request: ProjectRequest,
+    ) -> Result<(), ProjectError> {
+        self.check_index(index)?;
+        self.projects.remove(index);
+        self.add_project(request)
+    }
+
+    pub fn remove_project(&mut self, project: &Project) -> Result<(), ProjectError> {
+        let index = self.index_of(project)?;
+        self.projects.remove(index);
+        Ok(())
+    }
+
+    pub fn remove_by_index(&mut self, index: usize) -> Result<(), ProjectError> {
         self.check_index(index)?;
         self.projects.remove(index);
         Ok(())
     }
 
-    pub fn launch_project(&self, index: usize) -> Result<(), ProjectError> {
-        let path = self.get_script_path(index)?;
+    pub fn launch_project(&self, project: &Project) -> Result<(), ProjectError> {
+        let path = self.script_path(project);
         Command::new(path)
             .output()
             .map_err(ProjectError::ExecutionError)?;
@@ -138,17 +168,20 @@ impl ProjectHandler {
         edit::edit_file(&self.config_path).map_err(ProjectError::IOError)
     }
 
-    pub fn edit_project_script(&self, index: usize) -> Result<(), ProjectError> {
-        let path = self.get_script_path(index)?;
+    pub fn edit_project_script(&self, project: &Project) -> Result<(), ProjectError> {
+        let path = self.script_path(project);
         Self::edit_file(path)
+    }
+
+    pub fn index_of(&self, project: &Project) -> Result<usize, ProjectError> {
+        self.projects
+            .iter()
+            .position(|p| p == project)
+            .ok_or(ProjectError::InvalidProject)
     }
 
     fn edit_file<P: AsRef<Path>>(path: P) -> Result<(), ProjectError> {
         edit::edit_file(path).map_err(ProjectError::IOError)
-    }
-
-    pub fn script_path(&self, project: &Project) -> PathBuf {
-        self.project_folder.join(&project.script_name)
     }
 
     fn sort_projects(&mut self) {
@@ -162,10 +195,8 @@ impl ProjectHandler {
         Ok(())
     }
 
-    fn get_script_path(&self, index: usize) -> Result<PathBuf, ProjectError> {
-        self.check_index(index)?;
-        let project = &self.projects[index];
-        Ok(self.project_folder.join(&project.script_name))
+    pub fn script_path(&self, project: &Project) -> PathBuf {
+        self.project_folder.join(&project.script_name)
     }
 }
 
