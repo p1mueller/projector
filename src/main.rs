@@ -1,11 +1,4 @@
-use crate::app::App;
-
-pub mod app;
-pub mod event;
-pub mod forms;
-pub mod project;
-pub mod ui;
-pub mod widgets;
+use projector::app::App;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
