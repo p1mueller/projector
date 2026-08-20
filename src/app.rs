@@ -104,7 +104,6 @@ impl App {
 
     pub async fn handle_events(&mut self) -> color_eyre::Result<()> {
         match self.events.next().await? {
-            Event::Tick => self.tick(),
             Event::Crossterm(event) => match event {
                 crossterm::event::Event::Key(key_event)
                     if key_event.kind == crossterm::event::KeyEventKind::Press =>
@@ -319,12 +318,6 @@ impl App {
         }
         Ok(())
     }
-
-    /// Handles the tick event of the terminal.
-    ///
-    /// The tick event is where you can update the state of your application with any logic that
-    /// needs to be updated at a fixed frame rate. E.g. polling a server, updating an animation.
-    pub fn tick(&self) {}
 
     /// Set running to false to quit the application.
     pub fn quit(&mut self) {

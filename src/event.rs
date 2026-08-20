@@ -14,18 +14,9 @@ use std::{
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
-/// The frequency a which tick events are emitted.
-const TICK_PERIOD: f64 = 2.0;
-
 /// Representation of all possible events.
 #[derive(Clone, Debug)]
 pub enum Event {
-    /// An event that is emitted on a regular schedule.
-    ///
-    /// Use this event to run any code which has to run outside of being a direct response to a user
-    /// event. e.g. polling exernal systems, updating animations, or rendering the UI based on a
-    /// fixed frame rate.
-    Tick,
     /// Crossterm events.
     ///
     /// These events are emitted by the terminal.
@@ -164,7 +155,7 @@ impl EventHandler {
     }
 }
 
-/// A thread that handles reading crossterm events and emitting tick events on a regular schedule.
+/// A thread that handles reading crossterm events.
 struct EventThread {
     /// Event sender channel.
     sender: mpsc::UnboundedSender<Event>,
@@ -182,14 +173,10 @@ impl EventThread {
 
     /// Runs the event thread.
     ///
-    /// This function emits tick events at a fixed rate and polls for crossterm events in between.
+    /// This function polls for crossterm events in between.
     async fn run(self) {
-        let tick_interval = Duration::from_secs_f64(TICK_PERIOD);
         let mut reader = crossterm::event::EventStream::new();
-        let mut tick = tokio::time::interval(tick_interval);
         loop {
-            // emit tick events at a fixed rate
-            let tick_delay = tick.tick();
             let crossterm_event = reader.next().fuse();
             tokio::select! {
                 _ = self.cancellation_token.cancelled() => {
@@ -197,9 +184,6 @@ impl EventThread {
                 }
                 _ = self.sender.closed() => {
                     break;
-                }
-                _ = tick_delay => {
-                    self.send(Event::Tick)
                 }
                 Some(Ok(evt)) = crossterm_event => {
                     self.send(Event::Crossterm(evt));
