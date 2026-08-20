@@ -6,8 +6,7 @@ pub enum ProjectError {
     AlreadyExists(&'static str),
     InvalidField(&'static str),
     InvalidProject,
-    ScriptDoesNotExist,
-    NotExecutable(PathBuf),
+    Unavailable { path: PathBuf, reason: String },
     IOError(Error),
     ExecutionError(Error),
 }
@@ -16,8 +15,7 @@ impl Display for ProjectError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidField(field) => write!(f, "Field `{field}` must not be empty"),
-            Self::ScriptDoesNotExist => write!(f, "Script path does not exist"),
-            Self::NotExecutable(path) => write!(f, "Script at {path:?} is not executable"),
+            Self::Unavailable { path, reason } => write!(f, "Script at {path:?} {reason}"),
             Self::AlreadyExists(field) => write!(f, "Entry with same `{field}` value exists"),
             Self::InvalidProject => write!(f, "Project was created outside of Project Handler"),
             Self::IOError(error) => error.fmt(f),

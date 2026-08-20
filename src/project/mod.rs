@@ -211,9 +211,15 @@ impl ProjectHandler {
 
 /// Returns `Ok` if `path` exists and is an executable regular file.
 pub fn check_executable(path: &Path) -> Result<(), ProjectError> {
-    let metadata = std::fs::metadata(path).map_err(|_| ProjectError::ScriptDoesNotExist)?;
+    let metadata = std::fs::metadata(path).map_err(|_| ProjectError::Unavailable {
+        path: path.to_path_buf(),
+        reason: "does not exist".into(),
+    })?;
     if !(metadata.is_file() && is_executable(&metadata)) {
-        return Err(ProjectError::NotExecutable(path.to_path_buf()));
+        return Err(ProjectError::Unavailable {
+            path: path.to_path_buf(),
+            reason: "is not an executable regular file".into(),
+        });
     }
     Ok(())
 }
@@ -234,10 +240,6 @@ pub fn get_projects_path(project_folder: Option<&str>) -> PathBuf {
         .expect("No valid user directories")
         .home_dir()
         .join(project_folder)
-}
-
-pub fn get_file_name(path: &Path) -> &str {
-    path.file_name().unwrap().to_str().unwrap()
 }
 
 pub fn create_template(path: &PathBuf) -> std::io::Result<()> {
@@ -506,10 +508,7 @@ mod tests {
             let _ = result;
         });
         let err = result.unwrap_err();
-        assert!(
-            matches!(err, ProjectError::ScriptDoesNotExist),
-            "expected ScriptDoesNotExist, got {err}"
-        );
+        assert!(matches!(err, ProjectError::Unavailable { .. }), "got {err}");
     }
 
     #[test]
@@ -527,10 +526,7 @@ mod tests {
         let project = h.projects().first().unwrap().clone();
         let result = h.launch_project(&project, |_| {});
         let err = result.unwrap_err();
-        assert!(
-            matches!(err, ProjectError::NotExecutable(_)),
-            "expected NotExecutable, got {err}"
-        );
+        assert!(matches!(err, ProjectError::Unavailable { .. }), "got {err}");
     }
 
     #[test]
@@ -601,9 +597,6 @@ mod tests {
         fs::set_permissions(&path, permissions).unwrap();
 
         let err = check_executable(&path).unwrap_err();
-        assert!(
-            matches!(err, ProjectError::NotExecutable(_)),
-            "expected NotExecutable, got {err}"
-        );
+        assert!(matches!(err, ProjectError::Unavailable { .. }), "got {err}");
     }
 }

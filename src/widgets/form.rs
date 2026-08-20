@@ -10,7 +10,6 @@ use ratatui::{
     widgets::{Block, BorderType, Clear, ListState, Paragraph, StatefulWidget, Widget},
 };
 use std::{
-    collections::HashMap,
     fmt::Display,
     ops::{Deref, DerefMut},
 };
@@ -146,12 +145,6 @@ impl FormState {
         self.error = Some(error.to_string());
     }
 
-    pub fn set_text_selected(&mut self, text: &str) {
-        if let Some(field) = self.get_selected_field_mut() {
-            field.state.set_text(text);
-        }
-    }
-
     pub fn select_first(&mut self) {
         self.list_state.select_first();
     }
@@ -174,17 +167,6 @@ impl FormState {
         self.list_state.select_previous();
     }
 
-    pub fn unselect(&mut self) {
-        self.list_state.select(None);
-    }
-
-    pub fn entries(&self) -> HashMap<String, String> {
-        self.input_fields
-            .iter()
-            .map(|f| (f.name.to_lowercase(), f.state.text().to_string()))
-            .collect()
-    }
-
     fn get_selected_index(&mut self) -> Option<usize> {
         let index = self.list_state.selected()?;
         if index >= self.input_fields.len() {
@@ -203,11 +185,6 @@ impl FormState {
         } else {
             Some(index)
         }
-    }
-
-    fn get_selected_field_mut(&mut self) -> Option<&mut InputField> {
-        let index = self.get_selected_index()?;
-        self.input_fields.get_mut(index)
     }
 }
 
@@ -280,15 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn select_next_from_unselected_starts_at_first() {
-        let mut state = form(3);
-        state.unselect();
-        assert_eq!(state.list_state.selected(), None);
-        state.select_next();
-        assert_eq!(state.list_state.selected(), Some(0));
-    }
-
-    #[test]
     fn select_previous_decrements_and_stops_at_first() {
         let mut state = form(3);
         state.select_next();
@@ -315,7 +283,7 @@ mod tests {
     #[test]
     fn unselected_index_yields_none_but_deref_falls_back_to_first() {
         let mut state = form(4);
-        state.unselect();
+        state.list_state.select(None);
         assert_eq!(state.get_selected_index(), None);
         assert_eq!(state.get_index(), None);
         // `Deref` guards the `None` case with `unwrap_or_default`, so it still lands on field 0.
@@ -336,32 +304,9 @@ mod tests {
     }
 
     #[test]
-    fn entries_maps_lowercased_names_to_values() {
-        let mut state = form(2);
-        state
-            .input_fields
-            .iter_mut()
-            .zip(["alpha", "BETA"])
-            .for_each(|(field, value)| field.set_text(value));
-        let entries = state.entries();
-        assert_eq!(entries.get("f0").map(String::as_str), Some("alpha"));
-        assert_eq!(entries.get("f1").map(String::as_str), Some("BETA"));
-    }
-
-    #[test]
-    fn set_text_selected_targets_current_field_only() {
-        let mut state = form(3);
-        state.set_text_selected("only-here");
-        assert_eq!(state.input_fields[0].text(), "only-here");
-        assert_eq!(state.input_fields[1].text(), "");
-        state.select_next();
-        assert_eq!(state.input_fields[0].text(), "only-here");
-    }
-
-    #[test]
     fn clear_all_resets_fields_selection_and_error() {
         let mut state = form(3);
-        state.set_text_selected("x");
+        state.set_text("x");
         state.select_next();
         state.set_error("boom");
         state.clear_all();
