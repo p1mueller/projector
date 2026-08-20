@@ -58,6 +58,8 @@ pub enum AppEvent {
     SelectPrevious,
     Unselect,
     Reload,
+    /// Fired by the status TTL task when it lapses; carries the generation it was built for.
+    StatusExpired(usize),
     Quit,
 }
 

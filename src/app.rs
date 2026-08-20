@@ -30,6 +30,8 @@ pub struct App {
     pub list_state: ListState,
     /// Event handler.
     pub events: EventHandler,
+    /// The pending status-expiration task, if any. Kept singular so a new status replaces it.
+    pub status_task: Option<tokio::task::JoinHandle<()>>,
     pub state: AppState,
 }
 
@@ -40,6 +42,10 @@ pub struct AppState {
     pub failed: bool,
     pub show_group: bool,
     pub mode: Mode,
+    /// Status message (with style), shown in the footer until its TTL lapses.
+    pub status: Option<(String, ratatui::style::Style)>,
+    /// Generation of the current status; expirations carrying a different value are ignored.
+    pub status_generation: usize,
     pub overview: ListState,
     pub project_form: ProjectForm,
     pub filter: FilterState,
@@ -53,6 +59,7 @@ impl App {
             project_handler: ProjectHandler::default(),
             list_state: ListState::default(),
             events: EventHandler::new()?,
+            status_task: None,
             state: AppState::default(),
         })
     }
@@ -123,6 +130,7 @@ impl App {
                         stdout,
                         stderr,
                     } => self.report_launch_result(success, code, stdout, stderr),
+                    AppEvent::StatusExpired(generation) => self.expire_status(generation),
                     event => self.handle_app_event(event)?,
                 }
             }
@@ -263,6 +271,10 @@ impl App {
         let Some(project) = self.selected_project().cloned() else {
             return;
         };
+        self.set_status(
+            format!("launching {}", project.name),
+            ratatui::style::Style::default().fg(ratatui::style::Color::Yellow),
+        );
         let sender = self.events.sender();
         let result = self
             .project_handler
@@ -297,7 +309,45 @@ impl App {
             let exit = code
                 .map(|code| format!(" (exit code {code})"))
                 .unwrap_or_default();
+            let red = ratatui::style::Style::default().fg(ratatui::style::Color::Red);
+            self.set_status(format!("launch failed{exit}"), red);
             self.state.mode = Mode::Error(format!("Script failed{exit}\n{output}"));
+        } else {
+            let green = ratatui::style::Style::default().fg(ratatui::style::Color::Green);
+            self.set_status("launch succeeded".to_owned(), green);
+        }
+    }
+
+    const STATUS_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+    fn set_status(&mut self, message: String, style: ratatui::style::Style) {
+        self.state.status = Some((message, style));
+        self.state.status_generation += 1;
+        let generation = self.state.status_generation;
+
+        // Replace any pending expiration task so only the newest status's timer is live.
+        if let Some(old) = self.status_task.take() {
+            old.abort();
+        }
+        let ttl = std::env::var("PROJECTOR_STATUS_TTL_MS")
+            .ok()
+            .and_then(|raw| raw.parse().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(Self::STATUS_TTL);
+        let sender = self.events.sender();
+        self.status_task = Some(tokio::spawn(async move {
+            tokio::time::sleep(ttl).await;
+            let _ = sender.send(Event::App(AppEvent::StatusExpired(generation)));
+        }));
+
+        self.state.needs_redraw = true;
+    }
+
+    /// Clears the status only if `generation` matches the one currently displayed.
+    fn expire_status(&mut self, generation: usize) {
+        if self.state.status_generation == generation {
+            self.state.status = None;
+            self.state.needs_redraw = true;
         }
     }
 
@@ -465,6 +515,8 @@ impl Default for AppState {
             failed: false,
             show_group: false,
             mode: Mode::default(),
+            status: None,
+            status_generation: 0,
             overview,
             project_form: ProjectForm::default(),
             filter: FilterState::default(),
