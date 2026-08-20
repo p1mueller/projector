@@ -245,3 +245,138 @@ impl InputField {
         self.state.text()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn form(fields: usize) -> FormState {
+        FormState::new(
+            (0..fields)
+                .map(|i| InputField::new(&format!("F{i}")))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn new_selects_first_field() {
+        let state = form(4);
+        assert_eq!(state.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn select_next_walks_forward_and_clamps_at_last() {
+        let mut state = form(3);
+        assert_eq!(state.list_state.selected(), Some(0));
+        state.select_next();
+        assert_eq!(state.list_state.selected(), Some(1));
+        state.select_next();
+        assert_eq!(state.list_state.selected(), Some(2));
+        // `ListState::select_next` itself does not wrap; `select_next` clamps it.
+        state.select_next();
+        assert_eq!(state.list_state.selected(), Some(2));
+        state.select_next();
+        assert_eq!(state.list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn select_next_from_unselected_starts_at_first() {
+        let mut state = form(3);
+        state.unselect();
+        assert_eq!(state.list_state.selected(), None);
+        state.select_next();
+        assert_eq!(state.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn select_previous_decrements_and_stops_at_first() {
+        let mut state = form(3);
+        state.select_next();
+        state.select_next();
+        assert_eq!(state.list_state.selected(), Some(2));
+        state.select_previous();
+        assert_eq!(state.list_state.selected(), Some(1));
+        state.select_previous();
+        state.select_previous();
+        assert_eq!(state.list_state.selected(), Some(0));
+        // Already at the first field.
+        state.select_previous();
+        assert_eq!(state.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn selected_index_clamps_out_of_range_selection() {
+        let mut state = form(4);
+        state.list_state.select(Some(usize::MAX)); // e.g. produced by `select_last`
+        assert_eq!(state.get_selected_index(), Some(3));
+        assert_eq!(state.get_index(), Some(3));
+    }
+
+    #[test]
+    fn unselected_index_yields_none_but_deref_falls_back_to_first() {
+        let mut state = form(4);
+        state.unselect();
+        assert_eq!(state.get_selected_index(), None);
+        assert_eq!(state.get_index(), None);
+        // `Deref` guards the `None` case with `unwrap_or_default`, so it still lands on field 0.
+        state.set_text("deref-fallback");
+        assert_eq!(state.input_fields[0].text(), "deref-fallback");
+        assert_eq!(state.input_fields[1].text(), "");
+    }
+
+    #[test]
+    fn writes_landing_on_deref_target_track_selected_field() {
+        let mut state = form(3);
+        state.set_text("first-field"); // `DerefMut` targets the currently selected field
+        state.select_next();
+        state.set_text("second-field");
+        assert_eq!(state.input_fields[0].text(), "first-field");
+        assert_eq!(state.input_fields[1].text(), "second-field");
+        assert_eq!(state.input_fields[2].text(), "");
+    }
+
+    #[test]
+    fn entries_maps_lowercased_names_to_values() {
+        let mut state = form(2);
+        state
+            .input_fields
+            .iter_mut()
+            .zip(["alpha", "BETA"])
+            .for_each(|(field, value)| field.set_text(value));
+        let entries = state.entries();
+        assert_eq!(entries.get("f0").map(String::as_str), Some("alpha"));
+        assert_eq!(entries.get("f1").map(String::as_str), Some("BETA"));
+    }
+
+    #[test]
+    fn set_text_selected_targets_current_field_only() {
+        let mut state = form(3);
+        state.set_text_selected("only-here");
+        assert_eq!(state.input_fields[0].text(), "only-here");
+        assert_eq!(state.input_fields[1].text(), "");
+        state.select_next();
+        assert_eq!(state.input_fields[0].text(), "only-here");
+    }
+
+    #[test]
+    fn clear_all_resets_fields_selection_and_error() {
+        let mut state = form(3);
+        state.set_text_selected("x");
+        state.select_next();
+        state.set_error("boom");
+        state.clear_all();
+        for field in &state.input_fields {
+            assert_eq!(field.text(), "");
+        }
+        assert_eq!(state.list_state.selected(), Some(0));
+        assert!(state.error.is_none());
+    }
+
+    #[test]
+    fn set_error_stores_message() {
+        let mut state = form(1);
+        assert!(state.error.is_none());
+        state.set_error("something broke");
+        assert_eq!(state.error.as_deref(), Some("something broke"));
+    }
+}

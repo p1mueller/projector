@@ -62,7 +62,7 @@ impl TextInputState {
 
     pub fn clear(&mut self) {
         self.text.clear();
-        self.scroll_state.set_content_length(1);
+        self.scroll_state.reset_content(1);
     }
 
     pub fn put(&mut self, ch: char) {
@@ -120,4 +120,100 @@ impl TextInput {
 
 fn get_utf8_index(s: &str, ch_idx: usize) -> Option<usize> {
     s.char_indices().nth(ch_idx).map(|(i, _)| i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn type_in(state: &mut TextInputState, text: &str) {
+        for ch in text.chars() {
+            state.put(ch);
+        }
+    }
+
+    #[test]
+    fn put_builds_text() {
+        let mut state = TextInputState::default();
+        type_in(&mut state, "abc");
+        assert_eq!(state.text(), "abc");
+        assert_eq!(state.cursor_position(), 3);
+    }
+
+    #[test]
+    fn backspace_removes_last_char() {
+        let mut state = TextInputState::default();
+        type_in(&mut state, "abc");
+        state.backspace();
+        assert_eq!(state.text(), "ab");
+        assert_eq!(state.cursor_position(), 2);
+    }
+
+    #[test]
+    fn backspace_on_empty_is_noop() {
+        let mut state = TextInputState::default();
+        state.backspace();
+        assert_eq!(state.text(), "");
+    }
+
+    #[test]
+    fn cursor_navigation_and_insert_in_middle() {
+        let mut state = TextInputState::default();
+        type_in(&mut state, "ac");
+        state.move_cursor_left();
+        assert_eq!(state.cursor_position(), 1);
+        state.put('b');
+        assert_eq!(state.text(), "abc");
+        state.move_cursor_left();
+        state.move_cursor_left();
+        assert_eq!(state.cursor_position(), 0);
+        state.put('x');
+        assert_eq!(state.text(), "xabc");
+    }
+
+    #[test]
+    fn multibyte_chars_are_handled() {
+        let mut state = TextInputState::default();
+        type_in(&mut state, "a\u{1F418}"); // a + elephant emoji (2 chars)
+        assert_eq!(state.text(), "a\u{1F418}");
+        assert_eq!(state.cursor_position(), 2);
+        state.move_cursor_left();
+        assert_eq!(state.cursor_position(), 1);
+        state.put('b'); // inserts between 'a' and the emoji
+        assert_eq!(state.text(), "ab\u{1F418}");
+        // Backspace must remove the whole emoji, not half of it.
+        state.move_cursor_right();
+        state.backspace();
+        assert_eq!(state.text(), "ab");
+        state.backspace();
+        assert_eq!(state.text(), "a");
+    }
+
+    #[test]
+    fn set_text_replaces_content_and_anchors_cursor() {
+        let mut state = TextInputState::default();
+        type_in(&mut state, "hello");
+        state.move_cursor_left();
+        state.set_text("world");
+        assert_eq!(state.text(), "world");
+        assert_eq!(state.cursor_position(), 0);
+    }
+
+    #[test]
+    fn set_text_is_idempotent() {
+        let mut state = TextInputState::default();
+        state.set_text("same");
+        state.set_text("same");
+        assert_eq!(state.text(), "same");
+        assert_eq!(state.cursor_position(), 0);
+    }
+
+    #[test]
+    fn clear_empties_text_and_cursor() {
+        let mut state = TextInputState::default();
+        type_in(&mut state, "something");
+        state.clear();
+        assert_eq!(state.text(), "");
+        assert_eq!(state.cursor_position(), 0);
+    }
 }
