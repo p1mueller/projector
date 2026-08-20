@@ -51,7 +51,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
   build:
     runs-on: ${{ matrix.os }}
-    name: test ${{ matrix.os }}
+    name: build ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
