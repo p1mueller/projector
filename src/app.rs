@@ -7,8 +7,6 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 
-// TODO: Less file IO (reloading only when explicit or needed)
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Mode {
     #[default]

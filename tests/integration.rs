@@ -67,6 +67,7 @@ fn add_persists_to_config_and_round_trips() {
 }
 
 #[test]
+#[cfg(unix)]
 fn launch_reports_success_via_background_callback() {
     let tmp = TempDir::new().unwrap();
     let mut h = handler_in(tmp.path());
@@ -94,6 +95,7 @@ fn launch_reports_success_via_background_callback() {
 }
 
 #[test]
+#[cfg(unix)]
 fn launch_reports_failure_with_stderr_and_exit_code() {
     let tmp = TempDir::new().unwrap();
     let mut h = handler_in(tmp.path());
@@ -121,6 +123,7 @@ fn launch_reports_failure_with_stderr_and_exit_code() {
 }
 
 #[test]
+#[cfg(unix)]
 fn launch_rejects_non_executable_script() {
     let tmp = TempDir::new().unwrap();
     let mut h = handler_in(tmp.path());
