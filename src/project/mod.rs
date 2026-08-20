@@ -210,3 +210,233 @@ script_folder="$(dirname "$(readlink -f "$0")")"
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn tmp_handler() -> (TempDir, ProjectHandler) {
+        let tmp = TempDir::new().unwrap();
+        let folder = tmp.path().to_path_buf();
+        (tmp, ProjectHandler::new(folder, "settings.json"))
+    }
+
+    fn req<'a>(
+        name: &'a str,
+        script: &'a str,
+        parent: &'a str,
+        icon: &'a str,
+    ) -> ProjectRequest<'a> {
+        ProjectRequest {
+            name,
+            script,
+            parent,
+            icon,
+        }
+    }
+
+    #[test]
+    fn add_project_appends_and_sorts_by_name() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("Zebra", "zebra.sh", "", "")).unwrap();
+        h.add_project(req("Apple", "apple.sh", "", "")).unwrap();
+        h.add_project(req("Mango", "mango.sh", "", "")).unwrap();
+        let names: Vec<_> = h.projects().iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["Apple", "Mango", "Zebra"]);
+    }
+
+    #[test]
+    fn add_project_rejects_empty_name_and_script() {
+        let (_tmp, mut h) = tmp_handler();
+        let err = h.add_project(req("", "x.sh", "", "")).unwrap_err();
+        assert!(
+            matches!(err, ProjectError::InvalidField("name")),
+            "got {err}"
+        );
+        let err = h.add_project(req("X", "", "", "")).unwrap_err();
+        assert!(
+            matches!(err, ProjectError::InvalidField("script")),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn add_project_rejects_duplicate_name() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("Duplicated", "one.sh", "", "")).unwrap();
+        let err = h
+            .add_project(req("Duplicated", "two.sh", "", ""))
+            .unwrap_err();
+        assert!(
+            matches!(err, ProjectError::AlreadyExists("name")),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn add_project_rejects_duplicate_script() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("First", "shared.sh", "", "")).unwrap();
+        let err = h
+            .add_project(req("Second", "shared.sh", "", ""))
+            .unwrap_err();
+        assert!(
+            matches!(err, ProjectError::AlreadyExists("script")),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn add_project_creates_template_when_script_missing() {
+        let (tmp, mut h) = tmp_handler();
+        h.add_project(req("Auto", "new-script.sh", "", "")).unwrap();
+        let path = tmp.path().join("new-script.sh");
+        assert!(path.is_file());
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("#!/bin/bash"));
+    }
+
+    #[test]
+    fn filter_projects_matches_name_case_insensitive() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("Alpha Service", "a.sh", "", "")).unwrap();
+        h.add_project(req("Beta Service", "b.sh", "", "")).unwrap();
+        h.add_project(req("Unrelated", "c.sh", "", "")).unwrap();
+
+        let lower: Vec<_> = h
+            .filter_projects("service")
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(lower, vec!["Alpha Service", "Beta Service"]);
+        let upper: Vec<_> = h
+            .filter_projects("SERVICE")
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(upper, vec!["Alpha Service", "Beta Service"]);
+    }
+
+    #[test]
+    fn filter_projects_matches_parent() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("App", "a.sh", "backend", "")).unwrap();
+        h.add_project(req("Job", "j.sh", "backend", "")).unwrap();
+        h.add_project(req("Web", "w.sh", "frontend", "")).unwrap();
+
+        let hits: Vec<_> = h
+            .filter_projects("backend")
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(hits, vec!["App", "Job"]);
+    }
+
+    #[test]
+    fn filter_projects_no_match_yields_empty() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("Alpha", "a.sh", "", "")).unwrap();
+        assert!(h.filter_projects("zzz-unknown").next().is_none());
+    }
+
+    #[test]
+    fn remove_project_removes_entry() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("Target", "t.sh", "", "")).unwrap();
+        h.add_project(req("Keep", "k.sh", "", "")).unwrap();
+        assert_eq!(h.projects().len(), 2);
+
+        let target = h
+            .projects()
+            .iter()
+            .find(|p| p.name == "Target")
+            .unwrap()
+            .clone();
+        h.remove_project(&target).unwrap();
+        assert_eq!(h.projects().len(), 1);
+        assert_eq!(h.projects()[0].name, "Keep");
+    }
+
+    #[test]
+    fn remove_project_unknown_fails_with_invalid_project() {
+        let (_tmp, mut h) = tmp_handler();
+        let phantom = Project::new(
+            "ghost".to_string(),
+            "ghost.sh".to_string(),
+            None,
+            None,
+            true,
+        );
+        let err = h.remove_project(&phantom).unwrap_err();
+        assert!(matches!(err, ProjectError::InvalidProject), "got {err}");
+    }
+
+    #[test]
+    fn edit_project_replaces_name_and_script() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("Original", "orig.sh", "", "")).unwrap();
+        let original = h.projects().first().unwrap().clone();
+        h.edit_project(&original, req("Renamed", "renamed.sh", "", ""))
+            .unwrap();
+        assert_eq!(h.projects().len(), 1);
+        assert_eq!(h.projects()[0].name, "Renamed");
+        assert_eq!(h.projects()[0].script_name, "renamed.sh");
+    }
+
+    #[test]
+    fn read_then_write_round_trip_preserves_fields() {
+        let (tmp, mut h) = tmp_handler();
+        h.add_project(req("Alpha", "a.sh", "backend", "\u{1F170}"))
+            .unwrap();
+        h.add_project(req("Beta", "b.sh", "", "")).unwrap();
+        h.write_config().unwrap();
+
+        let mut fresh = ProjectHandler::new(tmp.path().to_path_buf(), "settings.json");
+        fresh.read_config().unwrap();
+
+        let names: Vec<_> = fresh.projects().iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["Alpha", "Beta"]);
+
+        let alpha = fresh.projects().iter().find(|p| p.name == "Alpha").unwrap();
+        assert_eq!(alpha.parent.as_deref(), Some("backend"));
+        assert_eq!(alpha.icon.as_deref(), Some("\u{1F170}"));
+        assert!(alpha.valid);
+    }
+
+    #[test]
+    fn read_config_flags_missing_scripts_as_invalid() {
+        let (tmp, mut h) = tmp_handler();
+        h.add_project(req("Phantom", "no-such-script.sh", "", ""))
+            .unwrap();
+        h.write_config().unwrap();
+        fs::remove_file(tmp.path().join("no-such-script.sh")).unwrap();
+
+        let mut fresh = ProjectHandler::new(tmp.path().to_path_buf(), "settings.json");
+        fresh.read_config().unwrap();
+        assert_eq!(fresh.projects().len(), 1);
+        assert!(
+            !fresh.projects()[0].valid,
+            "expected a missing script to be flagged invalid"
+        );
+    }
+
+    #[test]
+    fn create_template_starts_with_shebang() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tpl.sh");
+        create_template(&path).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("#!/bin/bash"), "got {content:?}");
+        assert!(content.contains("script_folder"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn create_template_sets_executable_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tpl.sh");
+        create_template(&path).unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o750);
+    }
+}
