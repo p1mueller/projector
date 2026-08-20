@@ -122,7 +122,7 @@ impl ProjectHandler {
         }
         let script = self.project_folder.join(request.script);
         if !(script.exists() && script.is_file()) {
-            create_template(request.script, &script)?
+            create_template(&script)?
         }
 
         self.projects.push(request.into());
@@ -148,7 +148,7 @@ impl ProjectHandler {
     pub fn launch_project(&self, project: &Project) -> Result<(), ProjectError> {
         let path = self.script_path(project);
         Command::new(path)
-            .output()
+            .spawn()
             .map_err(ProjectError::ExecutionError)?;
         Ok(())
     }
@@ -194,16 +194,12 @@ pub fn get_file_name(path: &Path) -> &str {
     path.file_name().unwrap().to_str().unwrap()
 }
 
-pub fn create_template(name: &str, path: &PathBuf) -> std::io::Result<()> {
+pub fn create_template(path: &PathBuf) -> std::io::Result<()> {
     std::fs::write(
         path,
-        format!(
-            r#"#!/bin/bash
-project_folder="/mnt/data/projects/{}"
+        r#"#!/bin/bash
 script_folder="$(dirname "$(readlink -f "$0")")"
 "#,
-            name
-        ),
     )?;
     #[cfg(unix)]
     if let Ok(meta) = std::fs::metadata(path) {
