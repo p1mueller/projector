@@ -1,5 +1,3 @@
-use std::ops::DerefMut;
-
 use crate::{
     event::{AppEvent, Event, EventHandler},
     forms::{GetForm, ProjectForm},
@@ -102,6 +100,7 @@ impl App {
         Ok(())
     }
 
+    /// Handle a single event from the [`EventHandler`], updating the app state accordingly.
     pub async fn handle_events(&mut self) -> color_eyre::Result<()> {
         match self.events.next().await? {
             Event::Crossterm(event) => match event {
@@ -116,245 +115,272 @@ impl App {
             },
             Event::App(app_event) => {
                 self.state.needs_redraw = true;
-                if app_event == AppEvent::Quit {
-                    self.quit();
-                    return Ok(());
-                }
-                if let AppEvent::LaunchFinished {
-                    success,
-                    code,
-                    stdout,
-                    stderr,
-                } = app_event
-                {
-                    if !success {
-                        let mut output = stderr;
-                        if output.trim().is_empty() {
-                            output = stdout;
-                        }
-                        let exit = code
-                            .map(|code| format!(" (exit code {code})"))
-                            .unwrap_or_default();
-                        self.state.mode = Mode::Error(format!("Script failed{exit}\n{output}"));
-                    }
-                    return Ok(());
-                }
-                let overview = &mut self.state.overview;
-                let project_state = self.state.project_form.state_mut();
-                match self.state.mode {
-                    Mode::Home => match app_event {
-                        AppEvent::SelectFirst => overview.select_first(),
-                        AppEvent::SelectLast => overview.select_last(),
-                        AppEvent::SelectNext => overview.select_next(),
-                        AppEvent::SelectPrevious => overview.select_previous(),
-                        AppEvent::Unselect => overview.select(None),
-                        AppEvent::ToggleGroup => self.state.show_group ^= true,
-                        AppEvent::AddProject => {
-                            if self.state.failed {
-                                return Ok(());
-                            }
-                            self.state.mode = Mode::Add;
-                            project_state.select_first();
-                        }
-                        AppEvent::EditProject => {
-                            if self.state.failed {
-                                return Ok(());
-                            }
-                            if let Some(project) = self.selected_project().cloned() {
-                                self.state.mode = Mode::Edit;
-                                self.state.project_form.set_project(project);
-                                self.state.project_form.state_mut().select_first();
-                            }
-                        }
-                        AppEvent::RemoveProject => {
-                            if self.selected_project().is_some() {
-                                self.state.mode = Mode::Remove;
-                            }
-                        }
-                        AppEvent::LaunchProject => {
-                            if let Some(project) = self.selected_project().cloned() {
-                                let sender = self.events.sender();
-                                let result =
-                                    self.project_handler
-                                        .launch_project(&project, move |result| {
-                                            let event = match result {
-                                                Ok(res) => AppEvent::LaunchFinished {
-                                                    success: res.success,
-                                                    code: res.code,
-                                                    stdout: res.stdout,
-                                                    stderr: res.stderr,
-                                                },
-                                                Err(error) => AppEvent::LaunchFinished {
-                                                    success: false,
-                                                    code: None,
-                                                    stdout: String::new(),
-                                                    stderr: error,
-                                                },
-                                            };
-                                            let _ = sender.send(Event::App(event));
-                                        });
-                                if let Err(err) = result {
-                                    self.state.mode = Mode::Error(err.to_string())
-                                }
-                            }
-                        }
-                        AppEvent::EditSettings => {
-                            if let Err(err) = self.open_editor(ProjectHandler::edit_settings) {
-                                self.state.mode = Mode::Error(err.to_string())
-                            }
-                        }
-                        AppEvent::EditScript => {
-                            let project = self.selected_project().cloned();
-
-                            if let Some(project) = project
-                                && let Err(err) =
-                                    self.open_editor(|ph| ph.edit_project_script(&project))
-                            {
-                                self.state.mode = Mode::Error(err.to_string());
-                            }
-                        }
-                        AppEvent::FilterProject => {
-                            self.state.mode = Mode::Filter;
-                            self.state.filter.active = true;
-                        }
-                        AppEvent::Reload => {
-                            self.state.failed = false;
-                            self.state.needs_reload = true;
-                        }
-                        AppEvent::Abort => self.go_home(),
-                        _ => self.state.needs_redraw = false,
-                    },
-
-                    Mode::Add | Mode::Edit | Mode::Filter => {
-                        let state = match self.state.mode {
-                            Mode::Add | Mode::Edit => project_state.deref_mut(),
-                            Mode::Filter => self.state.filter.deref_mut(),
-                            _ => unreachable!(),
-                        };
-                        match app_event {
-                            AppEvent::SelectNext => project_state.select_next(),
-                            AppEvent::SelectPrevious => project_state.select_previous(),
-                            AppEvent::MoveLeft => state.move_cursor_left(),
-                            AppEvent::MoveRight => state.move_cursor_right(),
-                            AppEvent::Char(ch) => state.put(ch),
-                            AppEvent::Backspace => state.backspace(),
-                            AppEvent::Submit => match self.state.mode {
-                                Mode::Add | Mode::Edit => {
-                                    self.handle_form_submit()?;
-                                }
-                                Mode::Filter => {
-                                    self.handle_filter_submit()?;
-                                }
-                                _ => unreachable!(),
-                            },
-                            AppEvent::Abort => match self.state.mode {
-                                Mode::Add | Mode::Edit => {
-                                    project_state.clear_all();
-                                    self.state.mode = Mode::Home;
-                                }
-                                Mode::Filter => {
-                                    self.go_home();
-                                }
-                                _ => unreachable!(),
-                            },
-                            _ => self.state.needs_redraw = false,
-                        }
-                    }
-
-                    Mode::Remove => match app_event {
-                        AppEvent::Submit => {
-                            let project = self.selected_project().unwrap().clone();
-                            let result = self.project_handler.remove_project(&project);
-                            match result {
-                                Ok(_) => {
-                                    self.project_handler.write_config()?;
-                                    self.go_home();
-                                }
-
-                                Err(err) => self.state.mode = Mode::Error(err.to_string()),
-                            }
-                        }
-                        AppEvent::Abort => self.state.mode = Mode::Home,
-                        _ => self.state.needs_redraw = false,
-                    },
-
-                    Mode::Error(_) => {
-                        if app_event == AppEvent::Submit {
-                            self.state.needs_reload = true;
-                            self.go_home();
-                        } else {
-                            self.state.needs_redraw = false;
-                        }
-                    }
+                match app_event {
+                    AppEvent::Quit => self.quit(),
+                    AppEvent::LaunchFinished {
+                        success,
+                        code,
+                        stdout,
+                        stderr,
+                    } => self.report_launch_result(success, code, stdout, stderr),
+                    event => self.handle_app_event(event)?,
                 }
             }
         }
         Ok(())
     }
 
-    /// Handles the key events and updates the state of [`App`].
-    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+    /// Route an application event to the handler for the current mode.
+    fn handle_app_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
         match self.state.mode {
-            Mode::Home => match key_event.code {
-                KeyCode::Esc => {
-                    if self.state.filter.active {
-                        self.events.send(AppEvent::Abort)
-                    } else {
-                        self.events.send(AppEvent::Quit)
-                    }
-                }
-                KeyCode::Char(' ') | KeyCode::Enter => self.events.send(AppEvent::LaunchProject),
-                KeyCode::Char('g') => self.events.send(AppEvent::SelectFirst),
-                KeyCode::Char('G') => self.events.send(AppEvent::SelectLast),
-                KeyCode::Down | KeyCode::Char('j') => self.events.send(AppEvent::SelectNext),
-                KeyCode::Up | KeyCode::Char('k') => self.events.send(AppEvent::SelectPrevious),
-                KeyCode::Left | KeyCode::Char('h') => self.events.send(AppEvent::Unselect),
-                KeyCode::Right | KeyCode::Char('l') => self.events.send(AppEvent::EditProject),
-                KeyCode::Char('e') => self.events.send(AppEvent::EditScript),
-                KeyCode::Char('a' | 'n') => self.events.send(AppEvent::AddProject),
-                KeyCode::Char('d') => self.events.send(AppEvent::RemoveProject),
-                KeyCode::Char('i') => self.events.send(AppEvent::ToggleGroup),
-                KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
-                    self.events.send(AppEvent::Quit)
-                }
-                KeyCode::Char('s') => self.events.send(AppEvent::EditSettings),
-                KeyCode::Char('f' | 'F' | '/') => self.events.send(AppEvent::FilterProject),
-                KeyCode::Char('r' | 'R') => self.events.send(AppEvent::Reload),
-                KeyCode::Char('q') => self.events.send(AppEvent::Quit),
-                _ => {}
-            },
+            Mode::Home => self.handle_home_event(event),
+            Mode::Add | Mode::Edit => self.handle_project_form_event(event),
+            Mode::Filter => self.handle_filter_event(event),
+            Mode::Remove => self.handle_remove_event(event),
+            Mode::Error(_) => self.handle_error_event(event),
+        }
+    }
 
-            Mode::Add | Mode::Edit | Mode::Filter => match key_event.code {
-                KeyCode::Esc => self.events.send(AppEvent::Abort),
-                KeyCode::Down | KeyCode::Tab => {
-                    if self.state.mode == Mode::Filter {
-                        self.events.send(AppEvent::Submit)
-                    } else {
-                        self.events.send(AppEvent::SelectNext)
-                    }
+    fn handle_home_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
+        match event {
+            AppEvent::SelectFirst => self.state.overview.select_first(),
+            AppEvent::SelectLast => self.state.overview.select_last(),
+            AppEvent::SelectNext => self.state.overview.select_next(),
+            AppEvent::SelectPrevious => self.state.overview.select_previous(),
+            AppEvent::Unselect => self.state.overview.select(None),
+            AppEvent::ToggleGroup => self.state.show_group ^= true,
+            AppEvent::AddProject => {
+                if !self.state.failed {
+                    self.state.mode = Mode::Add;
+                    self.state.project_form.state_mut().select_first();
                 }
-                KeyCode::Up | KeyCode::BackTab => self.events.send(AppEvent::SelectPrevious),
-                KeyCode::Left => self.events.send(AppEvent::MoveLeft),
-                KeyCode::Right => self.events.send(AppEvent::MoveRight),
-                KeyCode::Char(ch) => self.events.send(AppEvent::Char(ch)),
-                KeyCode::Backspace => self.events.send(AppEvent::Backspace),
-                KeyCode::Enter => self.events.send(AppEvent::Submit),
-                _ => {}
-            },
-
-            Mode::Remove => match key_event.code {
-                KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.events.send(AppEvent::Submit),
-                KeyCode::Esc | KeyCode::Char('n' | 'N') => self.events.send(AppEvent::Abort),
-                KeyCode::Char('q') => self.events.send(AppEvent::Quit),
-                _ => {}
-            },
-
-            Mode::Error(_) => match key_event.code {
-                KeyCode::Char('q') => self.events.send(AppEvent::Quit),
-                _ => self.events.send(AppEvent::Submit),
-            },
+            }
+            AppEvent::EditProject => {
+                if !self.state.failed
+                    && let Some(project) = self.selected_project().cloned()
+                {
+                    self.state.mode = Mode::Edit;
+                    self.state.project_form.set_project(project);
+                    self.state.project_form.state_mut().select_first();
+                }
+            }
+            AppEvent::RemoveProject => {
+                if self.selected_project().is_some() {
+                    self.state.mode = Mode::Remove;
+                }
+            }
+            AppEvent::LaunchProject => self.launch_selected(),
+            AppEvent::EditSettings => {
+                if let Err(err) = self.open_editor(ProjectHandler::edit_settings) {
+                    self.state.mode = Mode::Error(err.to_string());
+                }
+            }
+            AppEvent::EditScript => {
+                if let Some(project) = self.selected_project().cloned()
+                    && let Err(err) =
+                        self.open_editor(|handler| handler.edit_project_script(&project))
+                {
+                    self.state.mode = Mode::Error(err.to_string());
+                }
+            }
+            AppEvent::FilterProject => {
+                self.state.mode = Mode::Filter;
+                self.state.filter.active = true;
+            }
+            AppEvent::Reload => {
+                self.state.failed = false;
+                self.state.needs_reload = true;
+            }
+            AppEvent::Abort => self.go_home(),
+            _ => self.state.needs_redraw = false,
         }
         Ok(())
+    }
+
+    fn handle_project_form_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
+        match event {
+            AppEvent::SelectNext => self.state.project_form.state_mut().select_next(),
+            AppEvent::SelectPrevious => self.state.project_form.state_mut().select_previous(),
+            AppEvent::MoveLeft => self.state.project_form.move_cursor_left(),
+            AppEvent::MoveRight => self.state.project_form.move_cursor_right(),
+            AppEvent::Char(ch) => self.state.project_form.put(ch),
+            AppEvent::Backspace => self.state.project_form.backspace(),
+            AppEvent::Submit => self.handle_form_submit()?,
+            AppEvent::Abort => {
+                self.state.project_form.state_mut().clear_all();
+                self.state.mode = Mode::Home;
+            }
+            _ => self.state.needs_redraw = false,
+        }
+        Ok(())
+    }
+
+    fn handle_filter_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
+        match event {
+            AppEvent::MoveLeft => self.state.filter.move_cursor_left(),
+            AppEvent::MoveRight => self.state.filter.move_cursor_right(),
+            AppEvent::Char(ch) => self.state.filter.put(ch),
+            AppEvent::Backspace => self.state.filter.backspace(),
+            AppEvent::Submit => self.handle_filter_submit()?,
+            AppEvent::Abort => self.go_home(),
+            _ => self.state.needs_redraw = false,
+        }
+        Ok(())
+    }
+
+    fn handle_remove_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
+        match event {
+            AppEvent::Submit => {
+                let Some(project) = self.selected_project().cloned() else {
+                    return Ok(());
+                };
+                if let Err(err) = self.project_handler.remove_project(&project) {
+                    self.state.mode = Mode::Error(err.to_string());
+                    return Ok(());
+                }
+                self.project_handler.write_config()?;
+                self.go_home();
+            }
+            AppEvent::Abort => self.state.mode = Mode::Home,
+            _ => self.state.needs_redraw = false,
+        }
+        Ok(())
+    }
+
+    fn handle_error_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
+        match event {
+            AppEvent::Submit => {
+                self.state.needs_reload = true;
+                self.go_home();
+            }
+            _ => self.state.needs_redraw = false,
+        }
+        Ok(())
+    }
+
+    /// Launches the selected project in the background, surfacing launch failures.
+    fn launch_selected(&mut self) {
+        let Some(project) = self.selected_project().cloned() else {
+            return;
+        };
+        let sender = self.events.sender();
+        let result = self
+            .project_handler
+            .launch_project(&project, move |outcome| {
+                let event = match outcome {
+                    Ok(res) => {
+                        AppEvent::launch_finished(res.success, res.code, res.stdout, res.stderr)
+                    }
+                    Err(error) => AppEvent::launch_failed(error),
+                };
+                let _ = sender.send(Event::App(event));
+            });
+        if let Err(err) = result {
+            self.state.mode = Mode::Error(err.to_string());
+        }
+    }
+
+    /// Shows a failure popup when a background launch reports an error.
+    fn report_launch_result(
+        &mut self,
+        success: bool,
+        code: Option<i32>,
+        stdout: String,
+        stderr: String,
+    ) {
+        if !success {
+            let output = if stderr.trim().is_empty() {
+                stdout
+            } else {
+                stderr
+            };
+            let exit = code
+                .map(|code| format!(" (exit code {code})"))
+                .unwrap_or_default();
+            self.state.mode = Mode::Error(format!("Script failed{exit}\n{output}"));
+        }
+    }
+
+    /// Handles the key events and updates the state of [`App`].
+    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        if let Some(app_event) = self.map_key(&key_event) {
+            self.events.send(app_event);
+        }
+        Ok(())
+    }
+
+    /// Maps a key press in the current mode to an application event, if any.
+    fn map_key(&self, key_event: &KeyEvent) -> Option<AppEvent> {
+        match self.state.mode {
+            Mode::Home => self.map_home_key(key_event),
+            Mode::Add | Mode::Edit => self.map_form_key(key_event, false),
+            Mode::Filter => self.map_form_key(key_event, true),
+            Mode::Remove => self.map_remove_key(key_event),
+            Mode::Error(_) => self.map_error_key(key_event),
+        }
+    }
+
+    fn map_home_key(&self, key_event: &KeyEvent) -> Option<AppEvent> {
+        match key_event.code {
+            KeyCode::Esc => Some(if self.state.filter.active {
+                AppEvent::Abort
+            } else {
+                AppEvent::Quit
+            }),
+            KeyCode::Char(' ') | KeyCode::Enter => Some(AppEvent::LaunchProject),
+            KeyCode::Char('g') => Some(AppEvent::SelectFirst),
+            KeyCode::Char('G') => Some(AppEvent::SelectLast),
+            KeyCode::Down | KeyCode::Char('j') => Some(AppEvent::SelectNext),
+            KeyCode::Up | KeyCode::Char('k') => Some(AppEvent::SelectPrevious),
+            KeyCode::Left | KeyCode::Char('h') => Some(AppEvent::Unselect),
+            KeyCode::Right | KeyCode::Char('l') => Some(AppEvent::EditProject),
+            KeyCode::Char('e') => Some(AppEvent::EditScript),
+            KeyCode::Char('a' | 'n') => Some(AppEvent::AddProject),
+            KeyCode::Char('d') => Some(AppEvent::RemoveProject),
+            KeyCode::Char('i') => Some(AppEvent::ToggleGroup),
+            KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
+                Some(AppEvent::Quit)
+            }
+            KeyCode::Char('s') => Some(AppEvent::EditSettings),
+            KeyCode::Char('f' | 'F' | '/') => Some(AppEvent::FilterProject),
+            KeyCode::Char('r' | 'R') => Some(AppEvent::Reload),
+            KeyCode::Char('q') => Some(AppEvent::Quit),
+            _ => None,
+        }
+    }
+
+    fn map_form_key(&self, key_event: &KeyEvent, is_filter: bool) -> Option<AppEvent> {
+        match key_event.code {
+            KeyCode::Esc => Some(AppEvent::Abort),
+            KeyCode::Down | KeyCode::Tab => Some(if is_filter {
+                AppEvent::Submit
+            } else {
+                AppEvent::SelectNext
+            }),
+            KeyCode::Up | KeyCode::BackTab => Some(AppEvent::SelectPrevious),
+            KeyCode::Left => Some(AppEvent::MoveLeft),
+            KeyCode::Right => Some(AppEvent::MoveRight),
+            KeyCode::Char(ch) => Some(AppEvent::Char(ch)),
+            KeyCode::Backspace => Some(AppEvent::Backspace),
+            KeyCode::Enter => Some(AppEvent::Submit),
+            _ => None,
+        }
+    }
+
+    fn map_remove_key(&self, key_event: &KeyEvent) -> Option<AppEvent> {
+        match key_event.code {
+            KeyCode::Enter | KeyCode::Char('y' | 'Y') => Some(AppEvent::Submit),
+            KeyCode::Esc | KeyCode::Char('n' | 'N') => Some(AppEvent::Abort),
+            KeyCode::Char('q') => Some(AppEvent::Quit),
+            _ => None,
+        }
+    }
+
+    fn map_error_key(&self, key_event: &KeyEvent) -> Option<AppEvent> {
+        match key_event.code {
+            KeyCode::Char('q') => Some(AppEvent::Quit),
+            _ => Some(AppEvent::Submit),
+        }
     }
 
     /// Set running to false to quit the application.

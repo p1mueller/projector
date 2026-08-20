@@ -61,6 +61,33 @@ pub enum AppEvent {
     Quit,
 }
 
+impl AppEvent {
+    /// Builds a [`AppEvent::LaunchFinished`] from a launch outcome.
+    pub fn launch_finished(
+        success: bool,
+        code: Option<i32>,
+        stdout: String,
+        stderr: String,
+    ) -> Self {
+        Self::LaunchFinished {
+            success,
+            code,
+            stdout,
+            stderr,
+        }
+    }
+
+    /// Builds a [`AppEvent::LaunchFinished`] that reports a spawn-time error.
+    pub fn launch_failed(error: String) -> Self {
+        Self::LaunchFinished {
+            success: false,
+            code: None,
+            stdout: String::new(),
+            stderr: error,
+        }
+    }
+}
+
 /// Terminal event handler.
 #[derive(Debug)]
 pub struct EventHandler {

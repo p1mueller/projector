@@ -534,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn launch_project_reports_success_and_output() {
         let (tmp, h) = tmp_handler();
         let script = tmp.path().join("ok.sh");
@@ -561,6 +562,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn launch_project_reports_non_zero_exit_code_and_stderr() {
         let (tmp, h) = tmp_handler();
         let script = tmp.path().join("fail.sh");
