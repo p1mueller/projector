@@ -1,3 +1,14 @@
+//! Application state machine and event dispatch.
+//!
+//! [`App`] is the top-level object: it owns the [`crate::project::ProjectHandler`],
+//! the terminal [`EventHandler`], and the mutable [`AppState`]. `App::run`
+//! drives the main loop — reloading config, redrawing, and handling events —
+//! while [`Mode`] and the per-mode handlers route key presses to concrete
+//! actions.
+//!
+//! [`AppState`] holds the UI/interaction state: current mode, selection,
+//! sort, filter, form, and the transient status message.
+
 use crate::{
     event::{AppEvent, Event, EventHandler},
     forms::{GetForm, ProjectForm},
@@ -7,14 +18,21 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 
+/// The current screen / interaction flow of the app.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Mode {
+    /// Main overview screen (default).
     #[default]
     Home,
+    /// *Add project* form is open.
     Add,
+    /// *Edit project* form is open.
     Edit,
+    /// *Remove project* confirmation is shown.
     Remove,
+    /// *Filter* input is active.
     Filter,
+    /// An error/popup is shown; the payload is its message.
     Error(String),
 }
 
@@ -25,28 +43,40 @@ pub struct App {
     pub running: bool,
     /// Project handler.
     pub project_handler: ProjectHandler,
+    /// Selection state for the overview list (legacy; the live selection lives in [`AppState::overview`]).
     pub list_state: ListState,
     /// Event handler.
     pub events: EventHandler,
     /// The pending status-expiration task, if any. Kept singular so a new status replaces it.
     pub status_task: Option<tokio::task::JoinHandle<()>>,
+    /// The mutable UI / interaction state.
     pub state: AppState,
 }
 
+/// The mutable UI and interaction state, owned by [`App`].
 #[derive(Debug)]
 pub struct AppState {
+    /// Whether a redraw is pending.
     pub needs_redraw: bool,
+    /// Whether the config should be re-read on the next loop pass.
     pub needs_reload: bool,
+    /// Whether a previous config read failed (drives the retry-in-editor flow).
     pub failed: bool,
+    /// Whether the overview list shows parent groups.
     pub show_group: bool,
+    /// The current screen / flow.
     pub mode: Mode,
+    /// The current sort mode for the overview list.
     pub sort_mode: SortMode,
     /// Status message (with style), shown in the footer until its TTL lapses.
     pub status: Option<(String, ratatui::style::Style)>,
     /// Generation of the current status; expirations carrying a different value are ignored.
     pub status_generation: usize,
+    /// Selection state for the overview list.
     pub overview: ListState,
+    /// The add/edit project form.
     pub project_form: ProjectForm,
+    /// The filter input state.
     pub filter: FilterState,
 }
 
@@ -151,6 +181,7 @@ impl App {
         }
     }
 
+    /// Handle an event while on the main overview screen.
     fn handle_home_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
         match event {
             AppEvent::SelectFirst => self.state.overview.select_first(),
@@ -214,6 +245,7 @@ impl App {
         Ok(())
     }
 
+    /// Handle an event while the add/edit project form is open.
     fn handle_project_form_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
         match event {
             AppEvent::SelectNext => self.state.project_form.state_mut().select_next(),
@@ -232,6 +264,7 @@ impl App {
         Ok(())
     }
 
+    /// Handle an event while the filter input is active.
     fn handle_filter_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
         match event {
             AppEvent::MoveLeft => self.state.filter.move_cursor_left(),
@@ -245,6 +278,7 @@ impl App {
         Ok(())
     }
 
+    /// Handle an event while the remove-project confirmation is shown.
     fn handle_remove_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
         match event {
             AppEvent::Submit => {
@@ -265,6 +299,7 @@ impl App {
         Ok(())
     }
 
+    /// Handle an event while an error popup is shown.
     fn handle_error_event(&mut self, event: AppEvent) -> color_eyre::Result<()> {
         match event {
             AppEvent::Submit => {
@@ -328,8 +363,10 @@ impl App {
         }
     }
 
+    // Default lifetime of a status message before it auto-clears.
     const STATUS_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
+    // Show a status message for a TTL, replacing any pending expiration task.
     fn set_status(&mut self, message: String, style: ratatui::style::Style) {
         self.state.status = Some((message, style));
         self.state.status_generation += 1;
@@ -380,6 +417,7 @@ impl App {
         }
     }
 
+    /// Map a key press to an [`AppEvent`] while on the main overview screen.
     fn map_home_key(&self, key_event: &KeyEvent) -> Option<AppEvent> {
         match key_event.code {
             KeyCode::Esc => Some(if self.state.filter.active {
@@ -410,6 +448,8 @@ impl App {
         }
     }
 
+    /// Map a key press to an [`AppEvent`] in a text-input form; `is_filter`
+    /// distinguishes the filter (where Enter/Tab submit) from the project form.
     fn map_form_key(&self, key_event: &KeyEvent, is_filter: bool) -> Option<AppEvent> {
         match key_event.code {
             KeyCode::Esc => Some(AppEvent::Abort),
@@ -428,6 +468,7 @@ impl App {
         }
     }
 
+    /// Map a key press to an [`AppEvent`] in the remove-project confirmation.
     fn map_remove_key(&self, key_event: &KeyEvent) -> Option<AppEvent> {
         match key_event.code {
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => Some(AppEvent::Submit),
@@ -453,6 +494,7 @@ impl App {
         self.running = false;
     }
 
+    /// The project currently highlighted, honoring the active filter if any.
     fn selected_project(&self) -> Option<&Project> {
         let index = self.state.overview.selected()?;
 
@@ -465,6 +507,11 @@ impl App {
         }
     }
 
+    /// Temporarily leave the TUI, run `edit` in the user's editor, then
+    /// re-enter and mark the config for a reload.
+    ///
+    /// # Errors
+    /// - Propagates any error from entering/exiting the terminal or from `edit`.
     fn open_editor<F>(&mut self, edit: F) -> color_eyre::Result<()>
     where
         F: FnOnce(&ProjectHandler) -> Result<(), ProjectError>,
@@ -484,6 +531,11 @@ impl App {
         Ok(())
     }
 
+    /// Apply the project form: add or edit the project, persist, and return
+    /// home (or surface the error in the form).
+    ///
+    /// # Errors
+    /// - Propagates filesystem errors from writing the config.
     fn handle_form_submit(&mut self) -> color_eyre::Result<()> {
         let request = self.state.project_form.get_project();
         let result = match self.state.mode {
@@ -512,6 +564,7 @@ impl App {
         self.project_handler.sort_projects(self.state.sort_mode);
     }
 
+    /// Apply the filter: return home, keeping the filter active only if non-empty.
     fn handle_filter_submit(&mut self) -> color_eyre::Result<()> {
         self.state.mode = Mode::Home;
         if self.state.filter.text().is_empty() {
@@ -521,12 +574,15 @@ impl App {
         Ok(())
     }
 
+    /// Return to the main overview screen and clear the active filter.
     fn go_home(&mut self) {
         self.state.mode = Mode::Home;
         self.state.filter.clear_all();
     }
 }
 
+// Fresh state: Home mode, default sort, filter/form defaults, and flags set so
+// the first loop pass reloads the config and redraws.
 impl Default for AppState {
     fn default() -> Self {
         let mut overview = ListState::default();

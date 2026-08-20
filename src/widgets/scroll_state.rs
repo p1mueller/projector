@@ -1,24 +1,44 @@
+//! Tracks the cursor and the visible window over a piece of content.
+//!
+//! `ScrollState` stores where a scrolling window starts (`start_position`)
+//! and where, within it, the cursor or selection sits (`selected_position`),
+//! plus how many items the content currently holds and how many the viewport
+//! can show. It is `Copy` so it can be shared freely.
+
+/// The cursor/window position over a fixed piece of scrollable content.
+///
+/// The absolute cursor position is always `start_position() + selected_position()`,
+/// with `selected_position()` constrained to the viewport.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ScrollState {
+    /// Number of items in the content.
     content_length: usize,
+    /// First content index currently shown in the viewport.
     start_position: usize,
+    /// Cursor offset within the viewport (0..viewport).
     selected_position: usize,
+    /// How many items the viewport can display at once.
     viewport_length: usize,
 }
 
 impl ScrollState {
+    /// First content index currently visible in the viewport.
     pub fn start_position(&self) -> usize {
         self.start_position
     }
 
+    /// Cursor/selection offset within the viewport.
     pub fn selected_position(&self) -> usize {
         self.selected_position
     }
 
+    /// How many items the viewport displays at once.
     pub fn viewport_length(&self) -> usize {
         self.viewport_length
     }
 
+    /// Set the content size, clamping the cursor onto the last item if it now
+    /// overflows the (possibly shorter) content.
     pub fn set_content_length(&mut self, content_length: usize) {
         self.content_length = content_length;
         if self.start_position + self.selected_position >= content_length {
@@ -26,6 +46,8 @@ impl ScrollState {
         }
     }
 
+    /// Set the viewport size, re-centering the window and clamping the
+    /// selection so it stays inside the (possibly smaller) viewport.
     pub fn set_viewport_length(&mut self, viewport_length: usize) {
         self.viewport_length = viewport_length;
         let excess_blanks = (self.start_position + self.viewport_length)
@@ -40,6 +62,8 @@ impl ScrollState {
         }
     }
 
+    /// Advance the cursor one step, scrolling the window once the cursor
+    /// reaches the viewport's end. No-op at the end of the content.
     pub fn next(&mut self) {
         if !self.is_at_end() && self.is_at_viewport_end() {
             self.start_position += 1;
@@ -48,6 +72,8 @@ impl ScrollState {
         }
     }
 
+    /// Move the cursor back one step, scrolling the window up once the cursor
+    /// reaches the viewport's start. No-op at the beginning of the content.
     pub fn prev(&mut self) {
         if !self.is_at_beginning() && self.is_at_viewport_start() {
             self.start_position -= 1;
@@ -56,30 +82,36 @@ impl ScrollState {
         }
     }
 
+    /// Set the content size and reset the cursor and window to the start.
     pub fn reset_content(&mut self, content_length: usize) {
         self.content_length = content_length;
         self.start_position = 0;
         self.selected_position = 0;
     }
 
+    /// Jump the cursor to the last item, scrolling the window to the bottom.
     pub fn last(&mut self) {
         let effective_viewport_length = usize::min(self.viewport_length, self.content_length);
         self.start_position = self.content_length - effective_viewport_length;
         self.selected_position = effective_viewport_length.saturating_sub(1);
     }
 
+    // Whether the cursor is at the end of the current viewport window.
     fn is_at_viewport_end(&self) -> bool {
         self.selected_position == self.viewport_length.saturating_sub(1)
     }
 
+    // Whether the cursor is at the start of the current viewport window.
     fn is_at_viewport_start(&self) -> bool {
         self.selected_position == 0
     }
 
+    // Whether the cursor is on the very last content item.
     fn is_at_end(&self) -> bool {
         self.start_position + self.selected_position == self.content_length.saturating_sub(1)
     }
 
+    // Whether the cursor is on the very first content item.
     fn is_at_beginning(&self) -> bool {
         self.start_position == 0 && self.selected_position == 0
     }

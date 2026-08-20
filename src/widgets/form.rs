@@ -1,3 +1,13 @@
+//! A centered popup form: a bordered box containing labeled text input fields
+//! with a selection highlight and an optional error line.
+//!
+//! [`Form`] (a `StatefulWidget`) renders over a [`FormState`]; [`InputField`]
+//! is a single field (label + [`TextInputState`]), and `FormState` tracks the
+//! selected field, the error text, and the whole form's size.
+//!
+//! `FormState` derefs to the currently selected field's [`TextInputState`],
+//! so text-input operations target the active field.
+
 use super::{
     popup,
     text_input::{TextInput, TextInputState},
@@ -14,24 +24,46 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+// Cursor style used for fields that do not currently have keyboard focus.
 const NO_FOCUS_CURSOR: Style = Style::new().bg(Color::Reset).fg(Color::Reset);
+// Style applied to the error message line.
 const ERROR_STYLE: Style = Style::new().fg(Color::Red);
 
+/// A bordered, centered form widget for entering one value per field.
+///
+/// The title is `name`, the border/background style is `style`, and the input
+/// fields (and the selected one) come from the [`StatefulWidget`] state
+/// ([`FormState`]).
 pub struct Form<'a> {
+    /// Title shown in the form's border.
     name: &'a str,
+    /// Overall style (border color, background) of the form block.
     style: Style,
 }
 
+/// State for a [`Form`]: the ordered list of fields, the selected field, and
+/// the error message (if any).
+///
+/// `Deref`/`DerefMut` forward to the currently selected field's
+/// [`TextInputState`]. Panics (via `assert!`) if the form has no fields.
 #[derive(Debug)]
 pub struct FormState {
+    /// The form's input fields, in display order.
     pub input_fields: Vec<InputField>,
+    /// Which field is selected (the one the cursor/keyboard targets).
     pub list_state: ListState,
+    /// Error message to show under the fields, if any.
     pub error: Option<String>,
 }
 
+/// A single named input field in a [`Form`].
+///
+/// Wraps a field label and its [`TextInputState`].
 #[derive(Debug)]
 pub struct InputField {
+    /// Field label shown in the field's border.
     name: String,
+    /// The field's text, cursor, and scroll state.
     state: TextInputState,
 }
 
@@ -74,14 +106,17 @@ impl StatefulWidget for Form<'_> {
 }
 
 impl<'a> Form<'a> {
+    /// Create a form titled `name` with the default style.
     pub fn new(name: &'a str) -> Self {
         Form::styled(name, Style::default())
     }
 
+    /// Create a form titled `name` with an explicit style.
     pub fn styled(name: &'a str, style: Style) -> Self {
         Form { name, style }
     }
 
+    // Computes the centered area the popup form occupies within `area`.
     fn get_popup_area(area: Rect, state: &mut FormState) -> Rect {
         let height = state.get_render_height() + 3;
         let width = usize::min(area.width as usize, 50);
@@ -90,6 +125,7 @@ impl<'a> Form<'a> {
         popup::get_popup_area_centered(area, width, height)
     }
 
+    // Renders one field block; `highlight` gives the active field a blue border.
     fn render_input_field(area: Rect, buf: &mut Buffer, field: &mut InputField, highlight: bool) {
         let mut block = Block::bordered()
             .title(field.name.as_str())
@@ -107,6 +143,7 @@ impl<'a> Form<'a> {
         text_input.render(inner_area, buf, &mut field.state);
     }
 
+    // Renders the error line in red, doing nothing when there is no error.
     fn render_error(area: Rect, buf: &mut Buffer, error: Option<&String>) {
         let Some(error) = error else {
             return;
@@ -119,6 +156,7 @@ impl<'a> Form<'a> {
 }
 
 impl FormState {
+    /// Create a form state with the given fields, selecting the first.
     pub fn new(input_fields: Vec<InputField>) -> Self {
         let mut list_state = ListState::default();
         list_state.select_first();
@@ -129,10 +167,12 @@ impl FormState {
         }
     }
 
+    /// Height (in rows) the form's fields occupy when rendered.
     pub fn get_render_height(&self) -> usize {
         3 * self.input_fields.len()
     }
 
+    /// Clear all field text, select the first field, and clear the error.
     pub fn clear_all(&mut self) {
         for field in &mut self.input_fields {
             field.state.clear();
@@ -141,19 +181,23 @@ impl FormState {
         self.error = None;
     }
 
+    /// Set the error message shown under the fields.
     pub fn set_error(&mut self, error: impl Display) {
         self.error = Some(error.to_string());
     }
 
+    /// Select the first field.
     pub fn select_first(&mut self) {
         self.list_state.select_first();
     }
 
+    /// Select the last field.
     pub fn select_last(&mut self) {
         let last = self.input_fields.len().saturating_sub(1);
         self.list_state.select(Some(last));
     }
 
+    /// Move to the next field, clamping at the last (no wrap).
     pub fn select_next(&mut self) {
         self.list_state.select_next();
         if let Some(index) = self.list_state.selected()
@@ -163,10 +207,13 @@ impl FormState {
         }
     }
 
+    /// Move to the previous field, stopping at the first.
     pub fn select_previous(&mut self) {
         self.list_state.select_previous();
     }
 
+    // The selected field index, clamped to the last if it overflows, or `None`
+    // if nothing is selected.
     fn get_selected_index(&mut self) -> Option<usize> {
         let index = self.list_state.selected()?;
         if index >= self.input_fields.len() {
@@ -177,6 +224,8 @@ impl FormState {
         }
     }
 
+    // The selected field index, clamped to the last if it overflows, or `None`
+    // if nothing is selected.
     fn get_index(&self) -> Option<usize> {
         let index = self.list_state.selected()?;
         let len = self.input_fields.len();
@@ -188,6 +237,9 @@ impl FormState {
     }
 }
 
+// Forward text-input operations to the currently selected field.
+//
+// Panics if the form has no fields.
 impl Deref for FormState {
     type Target = TextInputState;
 
@@ -207,6 +259,7 @@ impl DerefMut for FormState {
 }
 
 impl InputField {
+    /// Create an empty field with the given label.
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
@@ -214,10 +267,12 @@ impl InputField {
         }
     }
 
+    /// Replace the field's text with `text`.
     pub fn set_text(&mut self, text: &str) {
         self.state.set_text(text);
     }
 
+    /// The field's current text.
     pub fn text(&self) -> &str {
         self.state.text()
     }

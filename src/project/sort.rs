@@ -1,11 +1,19 @@
+//! How the project overview list is ordered.
+//!
+//! See [`SortMode`], which can be cycled with [`SortMode::next`], applied with
+//! [`SortMode::apply`], and shown with [`SortMode::label`].
+
 use super::Project;
 
 /// Field the overview list can be ordered by.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
+    /// Sort by the project's display name (case-insensitive).
     #[default]
     Name,
+    /// Sort by the project's parent/group, missing parents last.
     Parent,
+    /// Sort by the project's script file name.
     Script,
 }
 

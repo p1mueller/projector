@@ -1,3 +1,13 @@
+//! Terminal event loop.
+//!
+//! [`EventHandler`] owns the ratatui terminal and a channel of [`Event`]s
+//! (terminal- or app-level events, produced by a background event-reader task),
+//! and drives the TUI: enter/exit the alternate screen, receive events, and
+//! forward [`AppEvent`]s to the running application.
+//!
+//! [`AppEvent`] is the set of high-level actions the app can perform (add /
+//! edit / remove a project, navigate, launch, etc.).
+
 use color_eyre::eyre::{OptionExt, eyre};
 use crossterm::{
     cursor,
@@ -32,35 +42,62 @@ pub enum Event {
 /// You can extend this enum with your own custom events.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppEvent {
+    /// Begin the *Add project* flow.
     AddProject,
+    /// Begin the *Edit project* flow for the selected project.
     EditProject,
+    /// Ask for confirmation to remove the selected project.
     RemoveProject,
+    /// Enter the *Filter* flow.
     FilterProject,
+    /// Open the settings file in the editor.
     EditSettings,
+    /// Open the selected project's script in the editor.
     EditScript,
+    /// Launch the selected project in the background.
     LaunchProject,
+    /// Toggle whether the overview shows parent groups.
     ToggleGroup,
+    /// Cycle to the next sort mode and re-sort the list.
     ToggleSort,
+    /// A character typed into the focused input.
     Char(char),
+    /// Backspace in the focused input.
     Backspace,
+    /// Submit the current form / filter.
     Submit,
+    /// Result of finishing a project launch (spawn-time failure included).
     LaunchFinished {
+        /// Whether the script exited successfully.
         success: bool,
+        /// The script's exit code, if it exited normally.
         code: Option<i32>,
+        /// The script's standard output.
         stdout: String,
+        /// The script's standard error.
         stderr: String,
     },
+    /// Cancel the current flow without changing state.
     Abort,
+    /// Move the input caret one character left.
     MoveLeft,
+    /// Move the input caret one character right.
     MoveRight,
+    /// Select the first item in the list.
     SelectFirst,
+    /// Select the last item in the list.
     SelectLast,
+    /// Select the next item in the list.
     SelectNext,
+    /// Select the previous item in the list.
     SelectPrevious,
+    /// Clear the list selection.
     Unselect,
+    /// Mark the config for a reload on the next loop iteration.
     Reload,
     /// Fired by the status TTL task when it lapses; carries the generation it was built for.
     StatusExpired(usize),
+    /// Quit the application.
     Quit,
 }
 
@@ -99,7 +136,9 @@ pub struct EventHandler {
     sender: mpsc::UnboundedSender<Event>,
     /// Event receiver channel.
     receiver: mpsc::UnboundedReceiver<Event>,
+    /// Handle to the event-reader task started by [`EventHandler::enter`].
     task: JoinHandle<()>,
+    /// Token used to stop the event-reader task.
     cancellation_token: CancellationToken,
 }
 
@@ -120,6 +159,8 @@ impl EventHandler {
         })
     }
 
+    /// Enter the TUI: enable raw mode, switch to the alternate screen,
+    /// hide the cursor, and (re)start the event-reader task.
     pub fn enter(&mut self) -> color_eyre::Result<()> {
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(stdout(), EnterAlternateScreen, cursor::Hide)?;
@@ -132,6 +173,8 @@ impl EventHandler {
         Ok(())
     }
 
+    /// Leave the TUI: stop the event task, then restore raw mode and the
+    /// cursor if still active.
     pub fn exit(&mut self) -> color_eyre::Result<()> {
         self.stop()?;
         if crossterm::terminal::is_raw_mode_enabled()? {
@@ -142,6 +185,10 @@ impl EventHandler {
         Ok(())
     }
 
+    /// Cancel the event-reader task and wait (up to ~100 ms) for it to finish.
+    ///
+    /// # Errors
+    /// - Fails if the task cannot be joined within the timeout.
     pub fn stop(&self) -> color_eyre::Result<()> {
         self.cancel();
         let mut counter = 0;
@@ -160,6 +207,7 @@ impl EventHandler {
         Ok(())
     }
 
+    /// Signal the event-reader task to shut down.
     pub fn cancel(&self) {
         self.cancellation_token.cancel();
     }

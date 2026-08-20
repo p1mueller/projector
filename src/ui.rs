@@ -1,3 +1,10 @@
+//! Rendering for the TUI: the main overview layout, the detail/preview
+//! panes, the footer, and the popup used for confirmation/error screens.
+//!
+//! `App::render` is the entry point; it partitions the screen and delegates
+//! to the private `render_*` helpers below. The free functions at the bottom
+//! are small, reusable helpers (list items, blocks, popups).
+
 use std::path::PathBuf;
 
 use crate::{
@@ -93,6 +100,7 @@ impl App {
         }
     }
 
+    // Renders the projects list (with title showing the current sort key).
     fn render_overview(projects: &[&Project], area: Rect, buf: &mut Buffer, state: &mut AppState) {
         let title = format!(" Projects (sort by {}) ", state.sort_mode.label());
         let block = create_block(&title);
@@ -106,6 +114,7 @@ impl App {
         StatefulWidget::render(&list, area, buf, &mut state.overview);
     }
 
+    // Renders the selected project's name, parent, and script path.
     fn render_detail_view(
         project_handler: &ProjectHandler,
         projects: &[&Project],
@@ -140,6 +149,7 @@ impl App {
         details.render(area, buf);
     }
 
+    // Renders the selected project's script content (or a "file missing" error).
     fn render_preview(
         project_handler: &ProjectHandler,
         projects: &[&Project],
@@ -166,6 +176,7 @@ impl App {
         preview.render(area, buf);
     }
 
+    // Renders the footer: mode-specific key hints, plus the status message if any.
     fn render_footer(
         area: Rect,
         buf: &mut Buffer,
@@ -209,6 +220,8 @@ impl App {
     }
 }
 
+// A list entry for a project: icon + name, optionally followed by its parent.
+// Invalid projects are rendered in the error style.
 fn to_list_item<'a>(project: &'a Project, show_parent: bool) -> ListItem<'a> {
     let icon = project.icon.as_ref().map_or_else(|| "", |i| i.as_str());
     let style = if project.valid {
@@ -231,6 +244,7 @@ fn to_list_item<'a>(project: &'a Project, show_parent: bool) -> ListItem<'a> {
     ListItem::new(content)
 }
 
+// A titled, rounded-border block with horizontal padding.
 fn create_block(title: &str) -> Block<'_> {
     Block::bordered()
         .title(title)
@@ -238,6 +252,7 @@ fn create_block(title: &str) -> Block<'_> {
         .padding(Padding::horizontal(1))
 }
 
+// Renders a centered popup with the given title, body text, and style.
 fn render_popup(title: &str, text: &str, style: Style, area: Rect, buf: &mut Buffer) {
     let lines = text.lines();
     let height = lines.clone().count() + 2;

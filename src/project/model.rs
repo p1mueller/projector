@@ -1,20 +1,43 @@
+//! In-memory data model for a project and the request used to create one.
+
+/// A single runnable project known to the handler.
+///
+/// A project is a shell script (identified by [`Project::script_name`]) plus
+/// display metadata. `valid` reports whether the script file actually exists
+/// on disk at the time the project was loaded.
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
+    /// Display name shown in the UI.
     pub name: String,
+    /// File name of the script relative to the project folder.
     pub script_name: String,
+    /// Optional parent/group the project belongs to.
     pub parent: Option<String>,
+    /// Optional icon (e.g. an emoji) shown next to the project.
     pub icon: Option<String>,
+    /// Whether the script file exists on disk.
     pub valid: bool,
 }
 
+/// User-provided fields for adding or editing a project.
+///
+/// Borrowed strings to avoid copies at the call site. `parent` and `icon` are
+/// empty strings for "unset" and are converted to `None` when constructing a
+/// [`Project`].
 pub struct ProjectRequest<'a> {
+    /// Display name (must be non-empty).
     pub name: &'a str,
+    /// Script file name (must be non-empty).
     pub script: &'a str,
+    /// Parent/group, or empty for none.
     pub parent: &'a str,
+    /// Icon, or empty for none.
     pub icon: &'a str,
 }
 
 impl Project {
+    /// Create a project from its individual fields.
     pub fn new(
         name: String,
         script_name: String,
@@ -33,6 +56,8 @@ impl Project {
 }
 
 impl From<ProjectRequest<'_>> for Project {
+    // Builds a valid [`Project`] from a request: blank `parent`/`icon`
+    // become `None` and `valid` is set to `true`.
     fn from(value: ProjectRequest) -> Self {
         let parent = str_to_option(value.parent);
         let icon = str_to_option(value.icon);
@@ -46,6 +71,7 @@ impl From<ProjectRequest<'_>> for Project {
     }
 }
 
+/// Convert a string to `Option<String>`: empty maps to `None`, anything else to `Some`.
 pub fn str_to_option(value: &str) -> Option<String> {
     (!value.is_empty()).then_some(value).map(str::to_string)
 }

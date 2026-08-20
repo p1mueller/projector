@@ -1,3 +1,10 @@
+//! Manage a user's projects: load, save, add, edit, filter, sort, and launch
+//! shell-script projects configured in a per-project-folder JSON file.
+//!
+//! The entry point is [`ProjectHandler`]; supporting types live in
+//! [`config`](self::config::Config), [`error`](self::error::ProjectError),
+//! [`model`](self::model::Project), and [`sort`](self::sort::SortMode).
+
 pub mod config;
 pub mod error;
 pub mod model;
@@ -16,21 +23,38 @@ use std::{
     process::Command,
 };
 
+/// Outcome of a launched project script.
+///
+/// Produced by [`ProjectHandler::launch_project`] and handed to `on_done`
+/// once the script finishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchResult {
+    /// Whether the script exited with a success status.
     pub success: bool,
+    /// The script's exit code, if it exited normally.
     pub code: Option<i32>,
+    /// The script's standard output.
     pub stdout: String,
+    /// The script's standard error.
     pub stderr: String,
 }
 
+/// Manages a collection of projects on disk and in memory.
+///
+/// Owns the folder holding the project scripts, the path to the JSON config
+/// file, and the in-memory project list that can be inspected, edited, and
+/// persisted.
 #[derive(Debug)]
 pub struct ProjectHandler {
+    /// Folder containing the project scripts.
     project_folder: PathBuf,
+    /// Path to the JSON config file.
     config_path: PathBuf,
+    /// Projects currently loaded, in order.
     projects: Vec<Project>,
 }
 
+// Default handler rooted at `~/.projects` with a `settings.json` config file.
 impl Default for ProjectHandler {
     fn default() -> Self {
         Self::new(get_projects_path(None), "settings.json")
@@ -38,12 +62,16 @@ impl Default for ProjectHandler {
 }
 
 impl ProjectHandler {
+    /// Create a handler for `folder` (created if missing) with a config file
+    /// named `config_name` inside it.
     pub fn new(folder: PathBuf, config_name: &str) -> Self {
         std::fs::create_dir_all(&folder).expect("Failed to create the project folder");
         let config_path = folder.join(config_name);
         Self::from_config_path(&config_path)
     }
 
+    /// Create a handler from the config file at `path`, writing an empty
+    /// config (`{}`) first if the file does not exist.
     pub fn from_config_path(path: &Path) -> Self {
         if !path.exists() {
             std::fs::write(path, "{}").expect("Failed to create the configuration file");
@@ -57,6 +85,10 @@ impl ProjectHandler {
         }
     }
 
+    /// Load projects from the config file into memory.
+    ///
+    /// A project whose script file is missing from the project folder is
+    /// loaded with `valid` set to `false`.
     pub fn read_config(&mut self) -> std::io::Result<()> {
         let content = std::fs::read_to_string(&self.config_path)?;
         let config: Config = serde_json::from_str(&content)?;
@@ -71,6 +103,7 @@ impl ProjectHandler {
         Ok(())
     }
 
+    /// Persist the in-memory project list to the config file as pretty-printed JSON.
     pub fn write_config(&self) -> std::io::Result<()> {
         let mut config = BTreeMap::new();
         for project in &self.projects {
@@ -88,10 +121,12 @@ impl ProjectHandler {
         std::fs::write(&self.config_path, serialized)
     }
 
+    /// All projects in current order.
     pub fn projects(&self) -> &[Project] {
         &self.projects
     }
 
+    /// Projects whose name or parent contains `text` (case-insensitive).
     pub fn filter_projects(&self, text: &str) -> impl Iterator<Item = &Project> {
         let text = text.to_lowercase();
         self.projects.iter().filter(move |p| {
@@ -102,14 +137,22 @@ impl ProjectHandler {
         })
     }
 
+    /// The project at `index` (panics if out of range).
     pub fn get_project(&self, index: usize) -> &Project {
         &self.projects[index]
     }
 
+    /// Mutable access to the project at `index` (panics if out of range).
     pub fn get_project_mut(&mut self, index: usize) -> &mut Project {
         &mut self.projects[index]
     }
 
+    /// Add a project, creating a template script first if none exists at
+    /// `request.script`.
+    ///
+    /// # Errors
+    /// - `InvalidField` if `name` or `script` is empty.
+    /// - `AlreadyExists` if the name or script is already in use.
     pub fn add_project(&mut self, request: ProjectRequest) -> Result<(), ProjectError> {
         if request.name.is_empty() {
             return Err(ProjectError::InvalidField("name"));
@@ -138,15 +181,21 @@ impl ProjectHandler {
         Ok(())
     }
 
+    /// Replace `project` with the values in `request` (remove then re-add).
     pub fn edit_project(
         &mut self,
         project: &Project,
         request: ProjectRequest,
     ) -> Result<(), ProjectError> {
+        // Replaces `project` with `request` by removing then re-adding it.
         self.remove_project(project)?;
         self.add_project(request)
     }
 
+    /// Remove `project` from the list.
+    ///
+    /// # Errors
+    /// - `InvalidProject` if `project` is not part of this handler.
     pub fn remove_project(&mut self, project: &Project) -> Result<(), ProjectError> {
         let index = self.index_of(project)?;
         self.projects.remove(index);
@@ -180,15 +229,21 @@ impl ProjectHandler {
         Ok(())
     }
 
+    /// Open the config file in the user's editor.
     pub fn edit_settings(&self) -> Result<(), ProjectError> {
         edit::edit_file(&self.config_path).map_err(ProjectError::IOError)
     }
 
+    /// Open `project`'s script file in the user's editor.
     pub fn edit_project_script(&self, project: &Project) -> Result<(), ProjectError> {
         let path = self.script_path(project);
         Self::edit_file(path)
     }
 
+    /// Position of `project` in the list.
+    ///
+    /// # Errors
+    /// - `InvalidProject` if `project` is not part of this handler.
     pub fn index_of(&self, project: &Project) -> Result<usize, ProjectError> {
         self.projects
             .iter()
@@ -200,6 +255,7 @@ impl ProjectHandler {
         edit::edit_file(path).map_err(ProjectError::IOError)
     }
 
+    /// Absolute path to `project`'s script file.
     pub fn script_path(&self, project: &Project) -> PathBuf {
         self.project_folder.join(&project.script_name)
     }
@@ -225,16 +281,19 @@ pub fn check_executable(path: &Path) -> Result<(), ProjectError> {
     Ok(())
 }
 
+// Any execute bit set (owner, group, or other) counts as executable.
 #[cfg(unix)]
 fn is_executable(metadata: &std::fs::Metadata) -> bool {
     metadata.permissions().mode() & 0o111 != 0
 }
 
+// Non-Unix targets have no meaningful mode bits; assume executable.
 #[cfg(not(unix))]
 fn is_executable(_metadata: &std::fs::Metadata) -> bool {
     true
 }
 
+/// Default projects location: `~/.projects` (`project_folder` if given).
 pub fn get_projects_path(project_folder: Option<&str>) -> PathBuf {
     let project_folder = project_folder.unwrap_or(".projects");
     UserDirs::new()
@@ -243,6 +302,8 @@ pub fn get_projects_path(project_folder: Option<&str>) -> PathBuf {
         .join(project_folder)
 }
 
+/// Write a new shell-script template to `path` and, on Unix, make it
+/// executable (mode `0o750`).
 pub fn create_template(path: &PathBuf) -> std::io::Result<()> {
     std::fs::write(
         path,

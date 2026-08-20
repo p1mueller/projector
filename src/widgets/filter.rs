@@ -1,3 +1,12 @@
+//! A filter input widget: a labeled text box used to narrow a list of items.
+//!
+//! [`FilterInput`] (a `StatefulWidget`) renders the label plus a
+//! [`super::text_input::TextInput`] backed by [`FilterState`],
+//! which also carries an `active` flag for keyboard focus.
+//!
+//! [`FilterState`] derefs to the inner [`TextInputState`] so callers can use
+//! the text-input API directly.
+
 use std::ops::{Deref, DerefMut};
 
 use ratatui::{
@@ -9,16 +18,31 @@ use ratatui::{
 
 use super::text_input::{TextInput, TextInputState};
 
+/// A single-line text input with a leading label (e.g. `"Filter: "`).
+///
+/// The label, label style, line style, and cursor style are all settable;
+/// the input's state is provided via the [`StatefulWidget`] contract with
+/// [`FilterState`].
 pub struct FilterInput<'a> {
+    /// The label text drawn before the input box.
     indicator: &'a str,
+    /// Style applied to the label.
     indicator_style: Style,
+    /// Style applied to the input's line (background, etc.).
     line_style: Style,
+    /// Style applied to the cursor character.
     cursor_style: Style,
 }
 
+/// State for a [`FilterInput`] widget.
+///
+/// `Deref`/`DerefMut` forward to `input_state` so the filter state can be
+/// used wherever a [`TextInputState`] is expected.
 #[derive(Debug, Default)]
 pub struct FilterState {
+    /// The underlying text input state (text, cursor, scroll).
     pub input_state: TextInputState,
+    /// Whether the filter currently has keyboard focus / is active.
     pub active: bool,
 }
 
@@ -57,6 +81,7 @@ impl Default for FilterInput<'_> {
 }
 
 impl<'a> FilterInput<'a> {
+    /// Create a filter input with the given label, using default styles.
     pub fn new(indicator: &'a str) -> Self {
         let obj = Self::default();
         Self {
@@ -67,6 +92,7 @@ impl<'a> FilterInput<'a> {
         }
     }
 
+    /// Create a filter input with explicit styles.
     pub fn styled(
         indicator: &'a str,
         indicator_style: Style,
@@ -82,6 +108,7 @@ impl<'a> FilterInput<'a> {
     }
 }
 
+// Forward text-input operations to the inner `TextInputState`.
 impl Deref for FilterState {
     type Target = TextInputState;
 
@@ -97,6 +124,7 @@ impl DerefMut for FilterState {
 }
 
 impl FilterState {
+    /// Clear the text and deactivate the filter.
     pub fn clear_all(&mut self) {
         self.clear();
         self.active = false;

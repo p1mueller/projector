@@ -1,3 +1,5 @@
+//! The "add" / "edit project" form ([`ProjectForm`]).
+
 use std::ops::{Deref, DerefMut};
 
 use super::GetForm;

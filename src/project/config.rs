@@ -1,15 +1,31 @@
+//! File format for the project configuration.
+//!
+//! The config is a JSON object mapping each project's script file name to a
+//! [`ProjectConfig`]. See [`Config`].
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// A single entry in the project configuration file.
+///
+/// Maps one project script (the map key it lives under in [`Config`]) to its
+/// display metadata. `parent` and `icon` are optional and default to `None`
+/// when absent.
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ProjectConfig {
+    /// Display name of the project.
     pub name: String,
+    /// Optional parent/group the project belongs to.
     #[serde(default)]
     pub parent: Option<String>,
+    /// Optional icon (e.g. an emoji) shown next to the project.
     #[serde(default)]
     pub icon: Option<String>,
 }
 
+/// The full configuration: each project script file name mapped to its settings.
+///
+/// Keys are script file names (e.g. `"a.sh"`).
 pub type Config = BTreeMap<String, ProjectConfig>;
 
 #[cfg(test)]

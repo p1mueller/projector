@@ -1,3 +1,9 @@
+//! A single-line editable text input widget, plus its state.
+//!
+//! [`TextInput`] (a `StatefulWidget`) renders the text from [`TextInputState`]
+//! with a highlighted cursor character; the state handles inserting, deleting,
+//! and moving the cursor over UTF-8 text using a shared [`ScrollState`].
+
 use super::scroll_state::ScrollState;
 use ratatui::{
     buffer::Buffer,
@@ -7,18 +13,29 @@ use ratatui::{
     widgets::{StatefulWidget, Widget},
 };
 
+// Default style of the cursor character (shown under the current position).
 const CURSOR_STYLE: Style = Style::new().fg(Color::Black).bg(Color::LightBlue);
+// Default style of the rest of the input line.
 const LINE_STYLE: Style = Style::new();
 
+/// A single-line text input widget.
+///
+/// Holds only styling; the text and cursor live in [`TextInputState`], passed
+/// in via the [`StatefulWidget`] contract.
 #[derive(Debug)]
 pub struct TextInput {
+    /// Style of the input line (background, foreground).
     line_style: Style,
+    /// Style of the cursor character.
     cursor_style: Style,
 }
 
+/// The editable content of a [`TextInput`]: its text and cursor/scroll state.
 #[derive(Debug, Default)]
 pub struct TextInputState {
+    /// The current text.
     text: String,
+    /// Cursor and viewport position over `text`.
     scroll_state: ScrollState,
 }
 
@@ -56,15 +73,18 @@ impl Default for TextInput {
 }
 
 impl TextInputState {
+    /// The current text.
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    /// Clear the text and reset the cursor to the start.
     pub fn clear(&mut self) {
         self.text.clear();
         self.scroll_state.reset_content(1);
     }
 
+    /// Insert `ch` at the cursor position, moving the cursor forward.
     pub fn put(&mut self, ch: char) {
         let idx = get_utf8_index(&self.text, self.cursor_position()).unwrap_or(self.text.len());
         self.text.insert(idx, ch);
@@ -72,6 +92,7 @@ impl TextInputState {
         self.scroll_state.next();
     }
 
+    /// Delete the character before the cursor, if any.
     pub fn backspace(&mut self) {
         if self.cursor_position() >= 1 {
             let idx = get_utf8_index(&self.text, self.cursor_position() - 1).unwrap();
@@ -81,25 +102,30 @@ impl TextInputState {
         }
     }
 
+    /// Move the cursor one character to the right.
     pub fn move_cursor_right(&mut self) {
         self.scroll_state.next();
     }
 
+    /// Move the cursor one character to the left.
     pub fn move_cursor_left(&mut self) {
         self.scroll_state.prev();
     }
 
+    /// Replace the text with `text`, anchoring the cursor to the start.
     pub fn set_text(&mut self, text: &str) {
         self.text = text.to_string();
         self.scroll_state.reset_content(self.text.len() + 1);
     }
 
+    // Absolute cursor position: window start plus offset within the viewport.
     fn cursor_position(&self) -> usize {
         self.scroll_state.start_position() + self.scroll_state.selected_position()
     }
 }
 
 impl TextInput {
+    /// Create a text input with explicit line and cursor styles.
     pub fn new(line_style: Style, cursor_style: Style) -> Self {
         Self {
             line_style,
@@ -107,17 +133,20 @@ impl TextInput {
         }
     }
 
+    /// Set the input line style (builder).
     pub fn line_style(mut self, style: Style) -> Self {
         self.line_style = style;
         self
     }
 
+    /// Set the cursor character style (builder).
     pub fn cursor_style(mut self, style: Style) -> Self {
         self.cursor_style = style;
         self
     }
 }
 
+// The byte index of the `ch_idx`-th character, or `None` if past the end.
 fn get_utf8_index(s: &str, ch_idx: usize) -> Option<usize> {
     s.char_indices().nth(ch_idx).map(|(i, _)| i)
 }

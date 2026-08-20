@@ -1,5 +1,16 @@
+//! Helpers to compute the area a centered popup occupies within a region.
+//!
+//! [`get_popup_area_centered`] clamps the requested dimensions to the area and
+//! centers the resulting rect; [`get_popup_area`] is the lower-level, explicit
+//! margin variant.
+
 use ratatui::layout::{Constraint, Layout, Rect};
 
+/// The rect for a popup of `width` x `height`, centered in `rect`.
+///
+/// Requested dimensions are clamped to the area's size, and any leftover space
+/// is split between the left/top and right/bottom (an odd remainder goes to the
+/// right/bottom).
 pub fn get_popup_area_centered(rect: Rect, width: u16, height: u16) -> Rect {
     let height = height.min(rect.height);
     let width = width.min(rect.width);
@@ -10,6 +21,7 @@ pub fn get_popup_area_centered(rect: Rect, width: u16, height: u16) -> Rect {
     get_popup_area(rect, top_margin, right_margin, bottom_margin, left_margin)
 }
 
+/// The inner rect of `rect` inset by the given margins on each side.
 pub fn get_popup_area(
     rect: Rect,
     top_margin: u16,
