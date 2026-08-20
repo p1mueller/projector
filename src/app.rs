@@ -120,6 +120,25 @@ impl App {
                     self.quit();
                     return Ok(());
                 }
+                if let AppEvent::LaunchFinished {
+                    success,
+                    code,
+                    stdout,
+                    stderr,
+                } = app_event
+                {
+                    if !success {
+                        let mut output = stderr;
+                        if output.trim().is_empty() {
+                            output = stdout;
+                        }
+                        let exit = code
+                            .map(|code| format!(" (exit code {code})"))
+                            .unwrap_or_default();
+                        self.state.mode = Mode::Error(format!("Script failed{exit}\n{output}"));
+                    }
+                    return Ok(());
+                }
                 let overview = &mut self.state.overview;
                 let project_state = self.state.project_form.state_mut();
                 match self.state.mode {
@@ -153,8 +172,27 @@ impl App {
                             }
                         }
                         AppEvent::LaunchProject => {
-                            if let Some(project) = self.selected_project() {
-                                let result = self.project_handler.launch_project(project);
+                            if let Some(project) = self.selected_project().cloned() {
+                                let sender = self.events.sender();
+                                let result =
+                                    self.project_handler
+                                        .launch_project(&project, move |result| {
+                                            let event = match result {
+                                                Ok(res) => AppEvent::LaunchFinished {
+                                                    success: res.success,
+                                                    code: res.code,
+                                                    stdout: res.stdout,
+                                                    stderr: res.stderr,
+                                                },
+                                                Err(error) => AppEvent::LaunchFinished {
+                                                    success: false,
+                                                    code: None,
+                                                    stdout: String::new(),
+                                                    stderr: error,
+                                                },
+                                            };
+                                            let _ = sender.send(Event::App(event));
+                                        });
                                 if let Err(err) = result {
                                     self.state.mode = Mode::Error(err.to_string())
                                 }

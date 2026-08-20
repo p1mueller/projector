@@ -14,6 +14,14 @@ use std::{
     process::Command,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchResult {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 #[derive(Debug)]
 pub struct ProjectHandler {
     project_folder: PathBuf,
@@ -145,11 +153,30 @@ impl ProjectHandler {
         Ok(())
     }
 
-    pub fn launch_project(&self, project: &Project) -> Result<(), ProjectError> {
+    /// Launches a project script in the background.
+    ///
+    /// Fails immediately if the script is missing or not executable. Otherwise the script is
+    /// run on a worker thread and `on_done` is invoked with its output once it finishes.
+    pub fn launch_project(
+        &self,
+        project: &Project,
+        on_done: impl FnOnce(Result<LaunchResult, String>) + Send + 'static,
+    ) -> Result<(), ProjectError> {
         let path = self.script_path(project);
-        Command::new(path)
-            .spawn()
-            .map_err(ProjectError::ExecutionError)?;
+        check_executable(&path)?;
+
+        std::thread::spawn(move || {
+            let result = match Command::new(path).output() {
+                Ok(output) => Ok(LaunchResult {
+                    success: output.status.success(),
+                    code: output.status.code(),
+                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                }),
+                Err(error) => Err(error.to_string()),
+            };
+            on_done(result);
+        });
         Ok(())
     }
 
@@ -180,6 +207,25 @@ impl ProjectHandler {
     pub fn script_path(&self, project: &Project) -> PathBuf {
         self.project_folder.join(&project.script_name)
     }
+}
+
+/// Returns `Ok` if `path` exists and is an executable regular file.
+pub fn check_executable(path: &Path) -> Result<(), ProjectError> {
+    let metadata = std::fs::metadata(path).map_err(|_| ProjectError::ScriptDoesNotExist)?;
+    if !(metadata.is_file() && is_executable(&metadata)) {
+        return Err(ProjectError::NotExecutable(path.to_path_buf()));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &std::fs::Metadata) -> bool {
+    true
 }
 
 pub fn get_projects_path(project_folder: Option<&str>) -> PathBuf {
@@ -438,5 +484,124 @@ mod tests {
         create_template(&path).unwrap();
         let meta = fs::metadata(&path).unwrap();
         assert_eq!(meta.permissions().mode() & 0o777, 0o750);
+    }
+
+    fn collect<F>(
+        value: std::sync::mpsc::Receiver<F>,
+    ) -> std::result::Result<F, std::sync::mpsc::RecvTimeoutError> {
+        value
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| std::sync::mpsc::RecvTimeoutError::Timeout)
+    }
+
+    fn project_in(script: &str) -> Project {
+        Project::new("test".to_string(), script.to_string(), None, None, true)
+    }
+
+    #[test]
+    fn launch_project_rejects_missing_script() {
+        let (_tmp, h) = tmp_handler();
+        let project = project_in("not-there.sh");
+        let result = h.launch_project(&project, |result: Result<LaunchResult, String>| {
+            let _ = result;
+        });
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ProjectError::ScriptDoesNotExist),
+            "expected ScriptDoesNotExist, got {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn launch_project_rejects_non_executable_script() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, mut h) = tmp_handler();
+        let script = tmp.path().join("read-only.sh");
+        fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        h.add_project(req("x", "read-only.sh", "", "")).unwrap();
+        let project = h.projects().first().unwrap().clone();
+        let result = h.launch_project(&project, |_| {});
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ProjectError::NotExecutable(_)),
+            "expected NotExecutable, got {err}"
+        );
+    }
+
+    #[test]
+    fn launch_project_reports_success_and_output() {
+        let (tmp, h) = tmp_handler();
+        let script = tmp.path().join("ok.sh");
+        fs::write(&script, "#!/bin/sh\necho launched\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&script).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script, permissions).unwrap();
+        }
+
+        let project = project_in("ok.sh");
+        let (tx, rx) = std::sync::mpsc::channel();
+        h.launch_project(&project, move |result| {
+            let _ = tx.send(result);
+        })
+        .unwrap();
+
+        let result = collect(rx).unwrap();
+        let result = result.expect("expected Ok(LaunchResult)");
+        assert!(result.success);
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.trim_end().ends_with("launched"));
+    }
+
+    #[test]
+    fn launch_project_reports_non_zero_exit_code_and_stderr() {
+        let (tmp, h) = tmp_handler();
+        let script = tmp.path().join("fail.sh");
+        fs::write(&script, "#!/bin/sh\necho boom >&2\nexit 3\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&script).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script, permissions).unwrap();
+        }
+
+        let project = project_in("fail.sh");
+        let (tx, rx) = std::sync::mpsc::channel();
+        h.launch_project(&project, move |result| {
+            let _ = tx.send(result);
+        })
+        .unwrap();
+
+        let result = collect(rx).unwrap();
+        let result = result.expect("expected Ok(LaunchResult)");
+        assert!(!result.success);
+        assert_eq!(result.code, Some(3));
+        assert_eq!(result.stderr.trim_end(), "boom");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn check_executable_returns_not_executable_for_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("ro.sh");
+        fs::write(&path, "#!/bin/sh\n").unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&path, permissions).unwrap();
+
+        let err = check_executable(&path).unwrap_err();
+        assert!(
+            matches!(err, ProjectError::NotExecutable(_)),
+            "expected NotExecutable, got {err}"
+        );
     }
 }

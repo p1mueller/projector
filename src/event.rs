@@ -43,6 +43,12 @@ pub enum AppEvent {
     Char(char),
     Backspace,
     Submit,
+    LaunchFinished {
+        success: bool,
+        code: Option<i32>,
+        stdout: String,
+        stderr: String,
+    },
     Abort,
     MoveLeft,
     MoveRight,
@@ -142,6 +148,12 @@ impl EventHandler {
             .recv()
             .await
             .ok_or_eyre("Failed to receive event")
+    }
+
+    /// Returns a clone of the sender, so background tasks can push events into the loop without
+    /// holding a `&mut self`.
+    pub fn sender(&self) -> mpsc::UnboundedSender<Event> {
+        self.sender.clone()
     }
 
     /// Queue an app event to be sent to the event receiver.

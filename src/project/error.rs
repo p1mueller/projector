@@ -1,4 +1,4 @@
-use std::{fmt::Display, io::Error};
+use std::{fmt::Display, io::Error, path::PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -7,6 +7,7 @@ pub enum ProjectError {
     InvalidField(&'static str),
     InvalidProject,
     ScriptDoesNotExist,
+    NotExecutable(PathBuf),
     IOError(Error),
     ExecutionError(Error),
 }
@@ -16,6 +17,7 @@ impl Display for ProjectError {
         match self {
             Self::InvalidField(field) => write!(f, "Field `{field}` must not be empty"),
             Self::ScriptDoesNotExist => write!(f, "Script path does not exist"),
+            Self::NotExecutable(path) => write!(f, "Script at {path:?} is not executable"),
             Self::AlreadyExists(field) => write!(f, "Entry with same `{field}` value exists"),
             Self::InvalidProject => write!(f, "Project was created outside of Project Handler"),
             Self::IOError(error) => error.fmt(f),
