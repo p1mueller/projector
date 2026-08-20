@@ -180,7 +180,7 @@ impl App {
             Mode::Edit => "[↑↓|Tab] fields [←→] move caret [Enter] save [Esc] cancel",
             Mode::Filter => "[←→] move caret [Enter|Tab] apply [Esc] clear & quit filter",
             Mode::Remove => "[y|Y|Enter] yes [n|N|Esc] no [q] quit app",
-            Mode::Error(_) => "[any key] dismiss [q] quit app",
+            Mode::Error(_) => "[any key except Enter/Space] dismiss [q] quit app",
         };
         let content = match status {
             Some((message, style)) => Text::from(Line::from(vec![

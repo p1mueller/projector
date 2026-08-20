@@ -428,6 +428,10 @@ impl App {
 
     fn map_error_key(&self, key_event: &KeyEvent) -> Option<AppEvent> {
         match key_event.code {
+            // `Enter` and `Space` are the "launch" hotkeys, so treating them as
+            // "dismiss" risks dismissing an error the user just caused by
+            // reflexively pressing them to launch the next project.
+            KeyCode::Enter | KeyCode::Char(' ') => None,
             KeyCode::Char('q') => Some(AppEvent::Quit),
             _ => Some(AppEvent::Submit),
         }
