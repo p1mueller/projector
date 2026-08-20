@@ -11,6 +11,7 @@ Built with [ratatui] and [crossterm].
 - Launch a project script with `Enter` or `Space` — runs in the background
 - Success/failure feedback on the footer status line, with a popup on failure
 - Toggle a "parent / group" column to show each entry's group
+- Re-sort the list by name, parent group, or script file (`z` to cycle)
 - Preview the raw script contents in a side panel
 - Open `settings.json` or any individual script in your `$EDITOR`
 
@@ -97,6 +98,7 @@ The status line clears itself after a short delay.
 | `s`                      | Open `settings.json` in `$EDITOR` |
 | `f` / `F` / `/`           | Filter by name / parent           |
 | `i`                      | Toggle showing the group column   |
+| `z`                      | Cycle sort order (name → parent → script) |
 | `r` / `R`                 | Reload `settings.json` from disk  |
 | `q` / `Esc` / `Ctrl+C`    | Quit                              |
 

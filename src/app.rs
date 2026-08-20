@@ -1,7 +1,7 @@
 use crate::{
     event::{AppEvent, Event, EventHandler},
     forms::{GetForm, ProjectForm},
-    project::{Project, ProjectError, ProjectHandler},
+    project::{Project, ProjectError, ProjectHandler, SortMode},
     widgets::filter::FilterState,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -40,6 +40,7 @@ pub struct AppState {
     pub failed: bool,
     pub show_group: bool,
     pub mode: Mode,
+    pub sort_mode: SortMode,
     /// Status message (with style), shown in the footer until its TTL lapses.
     pub status: Option<(String, ratatui::style::Style)>,
     /// Generation of the current status; expirations carrying a different value are ignored.
@@ -69,7 +70,10 @@ impl App {
         while self.running {
             if self.state.needs_reload {
                 match self.project_handler.read_config() {
-                    Ok(_) => self.state.failed = false,
+                    Ok(_) => {
+                        self.state.failed = false;
+                        self.refresh_sort();
+                    }
                     Err(error) => {
                         if self.state.failed {
                             let res = self.open_editor(ProjectHandler::edit_settings);
@@ -155,6 +159,13 @@ impl App {
             AppEvent::SelectPrevious => self.state.overview.select_previous(),
             AppEvent::Unselect => self.state.overview.select(None),
             AppEvent::ToggleGroup => self.state.show_group ^= true,
+            AppEvent::ToggleSort => {
+                self.state.sort_mode = self.state.sort_mode.next();
+                self.project_handler.sort_projects(self.state.sort_mode);
+                self.state.overview.select_first();
+                // let blue = ratatui::style::Style::default().fg(ratatui::style::Color::Blue);
+                // self.set_status(format!("sort by {}", self.state.sort_mode.label()), blue);
+            }
             AppEvent::AddProject => {
                 if !self.state.failed {
                     self.state.mode = Mode::Add;
@@ -245,6 +256,7 @@ impl App {
                     return Ok(());
                 }
                 self.project_handler.write_config()?;
+                self.refresh_sort();
                 self.go_home();
             }
             AppEvent::Abort => self.state.mode = Mode::Home,
@@ -392,6 +404,7 @@ impl App {
             KeyCode::Char('s') => Some(AppEvent::EditSettings),
             KeyCode::Char('f' | 'F' | '/') => Some(AppEvent::FilterProject),
             KeyCode::Char('r' | 'R') => Some(AppEvent::Reload),
+            KeyCode::Char('z') => Some(AppEvent::ToggleSort),
             KeyCode::Char('q') => Some(AppEvent::Quit),
             _ => None,
         }
@@ -484,12 +497,19 @@ impl App {
         match result {
             Ok(_) => {
                 self.project_handler.write_config()?;
+                self.refresh_sort();
                 self.state.project_form.state_mut().clear_all();
+                self.state.overview.select_first();
                 self.go_home();
             }
             Err(error) => self.state.project_form.state_mut().set_error(error),
         }
         Ok(())
+    }
+
+    /// Re-order the handler's in-memory list to the current sort mode.
+    fn refresh_sort(&mut self) {
+        self.project_handler.sort_projects(self.state.sort_mode);
     }
 
     fn handle_filter_submit(&mut self) -> color_eyre::Result<()> {
@@ -517,6 +537,7 @@ impl Default for AppState {
             failed: false,
             show_group: false,
             mode: Mode::default(),
+            sort_mode: SortMode::default(),
             status: None,
             status_generation: 0,
             overview,

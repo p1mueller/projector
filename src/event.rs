@@ -40,6 +40,7 @@ pub enum AppEvent {
     EditScript,
     LaunchProject,
     ToggleGroup,
+    ToggleSort,
     Char(char),
     Backspace,
     Submit,

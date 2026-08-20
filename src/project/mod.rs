@@ -1,11 +1,13 @@
 pub mod config;
 pub mod error;
 pub mod model;
+pub mod sort;
 
 pub use config::{Config, ProjectConfig};
 use directories::UserDirs;
 pub use error::ProjectError;
 pub use model::{Project, ProjectRequest};
+pub use sort::SortMode;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
@@ -66,7 +68,6 @@ impl ProjectHandler {
                 Project::new(project.name, file_name, project.parent, project.icon, valid)
             })
             .collect();
-        self.sort_projects();
         Ok(())
     }
 
@@ -134,7 +135,6 @@ impl ProjectHandler {
         }
 
         self.projects.push(request.into());
-        self.sort_projects();
         Ok(())
     }
 
@@ -200,12 +200,13 @@ impl ProjectHandler {
         edit::edit_file(path).map_err(ProjectError::IOError)
     }
 
-    fn sort_projects(&mut self) {
-        self.projects.sort_by(|a, b| a.name.cmp(&b.name));
-    }
-
     pub fn script_path(&self, project: &Project) -> PathBuf {
         self.project_folder.join(&project.script_name)
+    }
+
+    /// Reorders the in-memory project list according to `mode`.
+    pub fn sort_projects(&mut self, mode: SortMode) {
+        mode.apply(&mut self.projects)
     }
 }
 
@@ -286,13 +287,57 @@ mod tests {
     }
 
     #[test]
-    fn add_project_appends_and_sorts_by_name() {
+    fn sort_projects_by_name() {
         let (_tmp, mut h) = tmp_handler();
         h.add_project(req("Zebra", "zebra.sh", "", "")).unwrap();
         h.add_project(req("Apple", "apple.sh", "", "")).unwrap();
         h.add_project(req("Mango", "mango.sh", "", "")).unwrap();
+        h.sort_projects(SortMode::Name);
         let names: Vec<_> = h.projects().iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["Apple", "Mango", "Zebra"]);
+    }
+
+    #[test]
+    fn sort_projects_by_parent_with_missing_last() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("Zeta", "z.sh", "frontend", "")).unwrap();
+        h.add_project(req("Alpha", "a.sh", "backend", "")).unwrap();
+        h.add_project(req("Bare", "b.sh", "", "")).unwrap();
+        h.add_project(req("Mid", "m.sh", "Frontend", "")).unwrap();
+        h.sort_projects(SortMode::Parent);
+        // "backend" < "frontend" (case-insensitive); no-parent entries go last.
+        let parents: Vec<Option<String>> = h.projects().iter().map(|p| p.parent.clone()).collect();
+        assert_eq!(
+            parents,
+            vec![
+                Some("backend".into()),
+                Some("Frontend".into()),
+                Some("frontend".into()),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn sort_projects_by_script() {
+        let (_tmp, mut h) = tmp_handler();
+        h.add_project(req("First", "zeta.sh", "", "")).unwrap();
+        h.add_project(req("Last", "alpha.sh", "", "")).unwrap();
+        h.add_project(req("Middle", "mid.sh", "", "")).unwrap();
+        h.sort_projects(SortMode::Script);
+        let scripts: Vec<_> = h
+            .projects()
+            .iter()
+            .map(|p| p.script_name.as_str())
+            .collect();
+        assert_eq!(scripts, vec!["alpha.sh", "mid.sh", "zeta.sh"]);
+    }
+
+    #[test]
+    fn sort_mode_cycles_name_parent_script() {
+        assert_eq!(SortMode::Name.next(), SortMode::Parent);
+        assert_eq!(SortMode::Parent.next(), SortMode::Script);
+        assert_eq!(SortMode::Script.next(), SortMode::Name);
     }
 
     #[test]

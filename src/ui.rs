@@ -94,7 +94,8 @@ impl App {
     }
 
     fn render_overview(projects: &[&Project], area: Rect, buf: &mut Buffer, state: &mut AppState) {
-        let block = create_block(" Projects ");
+        let title = format!(" Projects (sort by {}) ", state.sort_mode.label());
+        let block = create_block(&title);
         let list = List::new(projects.iter().map(|p| to_list_item(p, state.show_group)));
         let list = list
             .block(block)
@@ -174,7 +175,8 @@ impl App {
         let base = match mode {
             Mode::Home => {
                 "[j/↓|k/↑] nav [g/G] first/last [Enter|Space] launch [l/→] edit [a/n] add \
-                  [d] remove [e] script [s] settings [f|/] filter [i] group [r] reload [q|Esc|Ctrl-C] quit"
+                  [d] remove [e] script [s] settings [f|/] filter [i] group [z] sort \
+                  [r] reload [q|Esc|Ctrl-C] quit"
             }
             Mode::Add => "[↑↓|Tab] fields [←→] move caret [Enter] save [Esc] cancel",
             Mode::Edit => "[↑↓|Tab] fields [←→] move caret [Enter] save [Esc] cancel",
