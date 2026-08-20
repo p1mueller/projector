@@ -6,9 +6,10 @@ pub use config::{Config, ProjectConfig};
 use directories::UserDirs;
 pub use error::ProjectError;
 pub use model::{Project, ProjectRequest};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     collections::BTreeMap,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -28,11 +29,15 @@ impl Default for ProjectHandler {
 
 impl ProjectHandler {
     pub fn new(folder: PathBuf, config_name: &str) -> Self {
+        std::fs::create_dir_all(&folder).expect("Failed to create the project folder");
         let config_path = folder.join(config_name);
         Self::from_config_path(&config_path)
     }
 
     pub fn from_config_path(path: &Path) -> Self {
+        if !path.exists() {
+            std::fs::write(path, "{}").expect("Failed to create the configuration file");
+        }
         let config_path = std::fs::canonicalize(path).expect("Path couldn't be resolved");
         let project_folder = path.parent().expect("There should be a parent");
         Self {
@@ -134,24 +139,8 @@ impl ProjectHandler {
         self.add_project(request)
     }
 
-    pub fn edit_project_by_index(
-        &mut self,
-        index: usize,
-        request: ProjectRequest,
-    ) -> Result<(), ProjectError> {
-        self.check_index(index)?;
-        self.projects.remove(index);
-        self.add_project(request)
-    }
-
     pub fn remove_project(&mut self, project: &Project) -> Result<(), ProjectError> {
         let index = self.index_of(project)?;
-        self.projects.remove(index);
-        Ok(())
-    }
-
-    pub fn remove_by_index(&mut self, index: usize) -> Result<(), ProjectError> {
-        self.check_index(index)?;
         self.projects.remove(index);
         Ok(())
     }
@@ -188,13 +177,6 @@ impl ProjectHandler {
         self.projects.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    fn check_index(&self, index: usize) -> Result<(), ProjectError> {
-        if index >= self.projects.len() {
-            return Err(ProjectError::InvalidIndex(index));
-        }
-        Ok(())
-    }
-
     pub fn script_path(&self, project: &Project) -> PathBuf {
         self.project_folder.join(&project.script_name)
     }
@@ -223,6 +205,7 @@ script_folder="$(dirname "$(readlink -f "$0")")"
             name
         ),
     )?;
+    #[cfg(unix)]
     if let Ok(meta) = std::fs::metadata(path) {
         let mut permissions = meta.permissions();
         permissions.set_mode(0o750);

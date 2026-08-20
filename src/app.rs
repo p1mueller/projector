@@ -367,8 +367,8 @@ impl App {
         let result = match self.state.mode {
             Mode::Add => self.project_handler.add_project(request),
             Mode::Edit => {
-                let index = self.state.overview.selected().unwrap();
-                self.project_handler.edit_project_by_index(index, request)
+                let project = self.selected_project().unwrap().clone();
+                self.project_handler.edit_project(&project, request)
             }
             _ => unreachable!(),
         };

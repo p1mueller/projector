@@ -7,7 +7,6 @@ pub enum ProjectError {
     InvalidField(&'static str),
     InvalidProject,
     ScriptDoesNotExist,
-    InvalidIndex(usize),
     IOError(Error),
     ExecutionError(Error),
 }
@@ -18,7 +17,6 @@ impl Display for ProjectError {
             Self::InvalidField(field) => write!(f, "Field `{field}` must not be empty"),
             Self::ScriptDoesNotExist => write!(f, "Script path does not exist"),
             Self::AlreadyExists(field) => write!(f, "Entry with same `{field}` value exists"),
-            Self::InvalidIndex(index) => write!(f, "Cannot find a project with index {index}"),
             Self::InvalidProject => write!(f, "Project was created outside of Project Handler"),
             Self::IOError(error) => error.fmt(f),
             Self::ExecutionError(error) => {

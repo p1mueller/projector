@@ -178,6 +178,9 @@ impl App {
         list_state: &'a ListState,
     ) -> Option<&'a Project> {
         let index = list_state.selected()?;
+        if projects.is_empty() {
+            return None;
+        }
         let index = index.min(projects.len() - 1);
         Some(projects[index])
     }
