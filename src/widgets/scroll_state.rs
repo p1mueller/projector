@@ -36,7 +36,7 @@ impl ScrollState {
             self.selected_position += excess_blanks;
         }
         if self.selected_position >= viewport_length {
-            self.selected_position = viewport_length - 1;
+            self.selected_position = viewport_length.saturating_sub(1);
         }
     }
 
@@ -54,6 +54,12 @@ impl ScrollState {
         } else if !self.is_at_beginning() && !self.is_at_viewport_start() {
             self.selected_position -= 1;
         }
+    }
+
+    pub fn reset_content(&mut self, content_length: usize) {
+        self.content_length = content_length;
+        self.start_position = 0;
+        self.selected_position = 0;
     }
 
     pub fn last(&mut self) {

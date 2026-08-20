@@ -90,10 +90,8 @@ impl TextInputState {
     }
 
     pub fn set_text(&mut self, text: &str) {
-        self.clear();
-        for ch in text.chars() {
-            self.put(ch);
-        }
+        self.text = text.to_string();
+        self.scroll_state.reset_content(self.text.len() + 1);
     }
 
     fn cursor_position(&self) -> usize {
