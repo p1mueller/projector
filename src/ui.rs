@@ -71,7 +71,7 @@ impl App {
         Self::render_overview(&projects, overview_area, buf, state);
         Self::render_detail_view(project_handler, &projects, detail_area, buf, state);
         Self::render_preview(project_handler, &projects, preview_area, buf, state);
-        Self::render_footer(footer_area, buf);
+        Self::render_footer(footer_area, buf, &state.mode);
 
         match &state.mode {
             Mode::Add => Form::new("Add Project").render(area, buf, state.project_form.state_mut()),
@@ -165,11 +165,19 @@ impl App {
         preview.render(area, buf);
     }
 
-    fn render_footer(area: Rect, buf: &mut Buffer) {
-        let footer = Paragraph::new(
-            "[→|l] edit [↑↓|jk] navigate  [g] select first [G] select last [←|h] unselect",
-        )
-        .centered();
+    fn render_footer(area: Rect, buf: &mut Buffer, mode: &Mode) {
+        let text = match mode {
+            Mode::Home => {
+                "[j/↓|k/↑] nav [g/G] first/last [Enter|Space] launch [l/→] edit [a/n] add \
+                 [d] remove [e] script [s] settings [f|/] filter [i] group [r] reload [q|Esc|Ctrl-C] quit"
+            }
+            Mode::Add => "[↑↓|Tab] fields [←→] move caret [Enter] save [Esc] cancel",
+            Mode::Edit => "[↑↓|Tab] fields [←→] move caret [Enter] save [Esc] cancel",
+            Mode::Filter => "[←→] move caret [Enter|Tab] apply [Esc] clear & quit filter",
+            Mode::Remove => "[y|Y|Enter] yes [n|N|Esc] no [q] quit app",
+            Mode::Error(_) => "[any key] dismiss [q] quit app",
+        };
+        let footer = Paragraph::new(text).centered();
         footer.render(area, buf);
     }
 
