@@ -1,0 +1,15 @@
+# Treat Rust, config, and doc files as text with Unix line endings.
+*        text=auto
+*.rs     text eol=lf
+*.toml   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+
+# Mark binary files so git doesn't try to rewrite them.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.ico    binary
+*.pdf    binary
