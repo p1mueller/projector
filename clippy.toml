@@ -1,0 +1,7 @@
+# Clippy *tool options* (lint levels live in Cargo.toml's [lints]).
+#
+# Pin the minimum Rust version that can build and run this crate.
+# The crate uses `edition = "2024"`, which requires at least 1.85.
+# Clippy uses this to avoid suggesting code that only compiles on a
+# newer compiler, and to enforce `msrv`-aware lints.
+msrv = "1.85"
