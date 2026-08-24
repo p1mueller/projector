@@ -48,10 +48,19 @@ impl StatefulWidget for TextInput {
         let start_idx = state.scroll_state.start_position();
         let highlight_idx =
             get_utf8_index(&state.text, state.cursor_position()).unwrap_or(state.text.len());
-
-        let highlight = state.text.get(highlight_idx..=highlight_idx).unwrap_or(" ");
         let before_highlight = state.text.get(start_idx..highlight_idx).unwrap_or(" ");
-        let after_highlight = state.text.get(highlight_idx + 1..).unwrap_or(" ");
+
+        // The character under the cursor, which may span several UTF-8 bytes;
+        // slicing it by a single byte would produce invalid UTF-8 and break
+        // rendering of multibyte characters (e.g. icons) at the caret.
+        let rest = state.text.get(highlight_idx..).unwrap_or_default();
+        let (highlight, after_highlight) = match rest.chars().next() {
+            Some(ch) => (
+                &rest[..ch.len_utf8()],
+                rest.get(ch.len_utf8()..).unwrap_or(""),
+            ),
+            None => (" ", ""),
+        };
 
         let text_components = vec![
             Span::from(before_highlight),
@@ -90,6 +99,22 @@ impl TextInputState {
         self.text.insert(idx, ch);
         self.scroll_state.set_content_length(self.text.len() + 1);
         self.scroll_state.next();
+    }
+
+    /// Insert `text` at the cursor position, moving the cursor behind the
+    /// inserted text. Control characters (e.g. newlines) are dropped, since
+    /// this is a single-line input.
+    pub fn paste(&mut self, text: &str) {
+        let text: String = text.chars().filter(|c| !c.is_ascii_control()).collect();
+        if text.is_empty() {
+            return;
+        }
+        let idx = get_utf8_index(&self.text, self.cursor_position()).unwrap_or(self.text.len());
+        self.text.insert_str(idx, &text);
+        self.scroll_state.set_content_length(self.text.len() + 1);
+        for _ in 0..text.chars().count() {
+            self.scroll_state.next();
+        }
     }
 
     /// Delete the character before the cursor, if any.
@@ -219,6 +244,31 @@ mod tests {
     }
 
     #[test]
+    fn paste_inserts_at_cursor() {
+        let mut state = TextInputState::default();
+        type_in(&mut state, "a");
+        state.move_cursor_right();
+        state.paste("bc");
+        assert_eq!(state.text(), "abc");
+        assert_eq!(state.cursor_position(), 3);
+    }
+
+    #[test]
+    fn paste_drops_control_characters() {
+        let mut state = TextInputState::default();
+        state.paste("ab\ncd\te");
+        assert_eq!(state.text(), "abcde");
+        assert_eq!(state.cursor_position(), 5);
+    }
+
+    #[test]
+    fn paste_only_controls_is_noop() {
+        let mut state = TextInputState::default();
+        state.paste("\n\t\r");
+        assert_eq!(state.text(), "");
+    }
+
+    #[test]
     fn set_text_replaces_content_and_anchors_cursor() {
         let mut state = TextInputState::default();
         type_in(&mut state, "hello");
@@ -244,5 +294,55 @@ mod tests {
         state.clear();
         assert_eq!(state.text(), "");
         assert_eq!(state.cursor_position(), 0);
+    }
+
+    fn render_text(state: &mut TextInputState) -> String {
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        TextInput::default().render(area, &mut buf, state);
+        buf.content
+            .iter()
+            .map(|cell| cell.symbol().to_string())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    #[test]
+    fn cursor_on_multibyte_char_is_visible() {
+        // Regression: the cursor char used to be sliced by a single byte, which
+        // broke rendering of multibyte chars (e.g. icons) at the cursor.
+        let mut state = TextInputState::default();
+        state.set_text("\u{1F4C1}home");
+        assert_eq!(state.cursor_position(), 0);
+        let rendered = render_text(&mut state);
+        // Before the fix the cursor char was sliced by a single byte, so a
+        // multibyte char under the caret broke the rest of the line and the
+        // icon (and everything after it) rendered blank. Both must be present.
+        assert!(
+            rendered.contains('\u{1F4C1}'),
+            "expected the folder icon, got {rendered:?}"
+        );
+        assert!(
+            rendered.contains("home"),
+            "expected the text after the icon, got {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn cursor_in_middle_of_multibyte_text_is_visible() {
+        let mut state = TextInputState::default();
+        state.set_text("\u{1F4C1}h\u{1F4C2}e");
+        // Place the caret on the second icon (a multibyte char mid-line).
+        state.move_cursor_right();
+        state.move_cursor_right();
+        assert_eq!(state.text(), "\u{1F4C1}h\u{1F4C2}e");
+        let rendered = render_text(&mut state);
+        for ch in ['\u{1F4C1}', '\u{1F4C2}', 'h', 'e'] {
+            assert!(
+                rendered.contains(ch),
+                "expected {ch:?} in rendered text, got {rendered:?}"
+            );
+        }
     }
 }
