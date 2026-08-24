@@ -472,7 +472,9 @@ impl App {
             KeyCode::Up | KeyCode::BackTab => Some(AppEvent::SelectPrevious),
             KeyCode::Left => Some(AppEvent::MoveLeft),
             KeyCode::Right => Some(AppEvent::MoveRight),
-            KeyCode::Char('v') | KeyCode::Char('V') if key_event.modifiers == KeyModifiers::CONTROL => {
+            KeyCode::Char('v') | KeyCode::Char('V')
+                if key_event.modifiers == KeyModifiers::CONTROL =>
+            {
                 Some(AppEvent::Paste)
             }
             KeyCode::Char(ch) => Some(AppEvent::Char(ch)),
