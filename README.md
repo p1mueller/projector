@@ -108,6 +108,7 @@ The status line clears itself after a short delay.
 | -------------- | ---------------------------- |
 | `Up` / `Down` / `Tab`  | Move between fields     |
 | `Left` / `Right`       | Move the text caret     |
+| `Ctrl+V`               | Paste from the clipboard  |
 | `Enter`                  | Save                      |
 | `Esc`                    | Cancel (and clear the form) |
 
@@ -116,6 +117,7 @@ The status line clears itself after a short delay.
 | Key            | Action                       |
 | -------------- | ---------------------------- |
 | `Left` / `Right` | Move the text caret          |
+| `Ctrl+V`         | Paste from the clipboard     |
 | `Enter` / `Tab`    | Apply (empty text clears it) |
 | `Esc`                | Clear the filter and return to the list |
 

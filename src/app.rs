@@ -18,6 +18,15 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 
+/// Reads the text of the system clipboard.
+///
+/// # Errors
+/// - Fails if the clipboard backend cannot be started or the text read.
+fn read_clipboard() -> color_eyre::Result<String> {
+    let mut clipboard = arboard::Clipboard::new()?;
+    Ok(clipboard.get_text()?)
+}
+
 /// The current screen / interaction flow of the app.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Mode {
@@ -253,6 +262,7 @@ impl App {
             AppEvent::MoveLeft => self.state.project_form.move_cursor_left(),
             AppEvent::MoveRight => self.state.project_form.move_cursor_right(),
             AppEvent::Char(ch) => self.state.project_form.put(ch),
+            AppEvent::Paste => self.paste_into(),
             AppEvent::Backspace => self.state.project_form.backspace(),
             AppEvent::Submit => self.handle_form_submit()?,
             AppEvent::Abort => {
@@ -270,6 +280,7 @@ impl App {
             AppEvent::MoveLeft => self.state.filter.move_cursor_left(),
             AppEvent::MoveRight => self.state.filter.move_cursor_right(),
             AppEvent::Char(ch) => self.state.filter.put(ch),
+            AppEvent::Paste => self.paste_into(),
             AppEvent::Backspace => self.state.filter.backspace(),
             AppEvent::Submit => self.handle_filter_submit()?,
             AppEvent::Abort => self.go_home(),
@@ -461,6 +472,9 @@ impl App {
             KeyCode::Up | KeyCode::BackTab => Some(AppEvent::SelectPrevious),
             KeyCode::Left => Some(AppEvent::MoveLeft),
             KeyCode::Right => Some(AppEvent::MoveRight),
+            KeyCode::Char('v') | KeyCode::Char('V') if key_event.modifiers == KeyModifiers::CONTROL => {
+                Some(AppEvent::Paste)
+            }
             KeyCode::Char(ch) => Some(AppEvent::Char(ch)),
             KeyCode::Backspace => Some(AppEvent::Backspace),
             KeyCode::Enter => Some(AppEvent::Submit),
@@ -492,6 +506,20 @@ impl App {
     /// Set running to false to quit the application.
     pub fn quit(&mut self) {
         self.running = false;
+    }
+
+    /// Paste the system clipboard into the active text input (form or filter),
+    /// surfacing a status message if the clipboard cannot be read.
+    fn paste_into(&mut self) {
+        let red = ratatui::style::Style::default().fg(ratatui::style::Color::Red);
+        match read_clipboard() {
+            Ok(text) => match self.state.mode {
+                Mode::Add | Mode::Edit => self.state.project_form.paste(&text),
+                Mode::Filter => self.state.filter.paste(&text),
+                _ => {}
+            },
+            Err(error) => self.set_status(format!("clipboard unavailable: {error}"), red),
+        }
     }
 
     /// The project currently highlighted, honoring the active filter if any.

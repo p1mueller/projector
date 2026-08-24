@@ -62,6 +62,8 @@ pub enum AppEvent {
     ToggleSort,
     /// A character typed into the focused input.
     Char(char),
+    /// Paste the system clipboard into the focused input.
+    Paste,
     /// Backspace in the focused input.
     Backspace,
     /// Submit the current form / filter.
